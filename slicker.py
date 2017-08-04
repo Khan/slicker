@@ -278,16 +278,22 @@ def the_suggestor(old_name, new_name, use_alias=None):
                         % line.rstrip()])
 
                 if not existing_new_imports:
+                    if '.' in new_module and use_alias:
+                        base, suffix = new_module.rsplit('.', 1)
+                        if use_alias == suffix:
+                            import_stmt = 'from %s import %s' % (base, suffix)
+                        else:
+                            import_stmt = 'import %s as %s' % (
+                                new_module, use_alias)
+                    else:
+                        if use_alias and use_alias != new_module:
+                            import_stmt = 'import %s as %s' % (
+                                new_module, use_alias)
+                        else:
+                            import_stmt = 'import %s' % new_module
+
                     # We keep the same indentation-level.
                     indent = _LEADING_WHITESPACE_RE.search(line).group(1)
-                    base, suffix = new_module.rsplit('.', 1)
-                    if use_alias == suffix:
-                        import_stmt = 'from %s import %s' % (base, suffix)
-                    elif use_alias:
-                        import_stmt = 'import %s as %s' % (
-                            new_module, use_alias)
-                    else:
-                        import_stmt = 'import %s' % new_module
                     yield codemod.Patch(
                         i, i, ['%s%s\n' % (indent, import_stmt)])
                     existing_new_imports.add(new_module)  # only do this once
