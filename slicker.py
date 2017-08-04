@@ -184,8 +184,14 @@ def the_suggestor(old_name, new_name, use_alias=None):
                     patched_aliases.add(imp)
                     yield patch
 
-        # Next, fix up imports.  (But only if the file moved modules.)
+        # Next, fix up imports.  Don't bother if the file didn't move modules.
         if old_module == new_module:
+            return
+
+        # Nor if we didn't fix up references and would have had to.
+        # TODO(benkraft): I think we do extra work here if we don't change the
+        # alias but also don't have any references.
+        if not patched_aliases and final_new_module not in old_aliases:
             return
 
         # Lines that aren't imports, comments, or references to the new name.
