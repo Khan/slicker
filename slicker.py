@@ -242,6 +242,8 @@ def the_suggestor(old_name, new_name, use_alias=None):
                     # because it may have brought something else along.  Ask
                     # the user.
                     for line in filtered_lines:
+                        # TODO(benkraft): if this is *any* import, assume we're
+                        # safe.
                         if imported_prefix_re.search(line):
                             maybe_removable_imports.add(import_info)
                             break
@@ -341,6 +343,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('old_name')
     parser.add_argument('new_name')
+    # TODO(benkraft): We don't handle mocks right when there is an alias.
     parser.add_argument('-a', '--alias', metavar='ALIAS',
                         help='Alias to use when adding new import lines.')
     parsed_args = parser.parse_args()
