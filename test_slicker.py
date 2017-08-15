@@ -184,13 +184,13 @@ class DetermineImportsTest(unittest.TestCase):
                 'foo.bar.baz', ['import foo.bogus, baz\n'])
         with self.assertRaises(slicker.UnparsedImportError):
             slicker._determine_imports(
-                'foo.bar.baz', ['import (bar', '.baz)\n'])
-        with self.assertRaises(slicker.UnparsedImportError):
-            slicker._determine_imports(
-                'foo.bar.baz', ['import bar \\', '.baz)\n'])
+                'foo.bar.baz', ['import bar \\', '.baz\n'])
         with self.assertRaises(slicker.UnparsedImportError):
             slicker._determine_imports(
                 'foo.bar.baz', ['from foo import bar, baz\n'])
         with self.assertRaises(slicker.UnparsedImportError):
             slicker._determine_imports(
                 'foo.bar.baz', ['from foo import bogus, baz\n'])
+        with self.assertRaises(slicker.UnparsedImportError):
+            slicker._determine_imports(
+                'foo.bar.baz', ['from foo import (bogus, baz)\n'])

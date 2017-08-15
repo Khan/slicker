@@ -25,7 +25,8 @@ _ANY_PLAIN_IMPORT_RE = re.compile(
 _ANY_FROM_IMPORT_RE = re.compile(r'^\s*from +([\w.]*) +import\b')
 # We try to make this have no false negatives but minimize false positives.
 # TODO(benkraft): semicolons can cause false negatives :(
-_OTHER_IMPORT_RE = re.compile(r'''^\s*(from|import) +[^#"']*[\\(]''')
+_OTHER_IMPORT_RE = re.compile(r'''^\s*(from +[^#"'()]*(\\|import\b)|'''
+                              r'''import +[^#"'()]*\\)''')
 
 # Very aggressive in what it finds.
 _ANY_IMPORT_RE = re.compile(r'^\s*(from|import)\b')
@@ -335,6 +336,8 @@ def the_suggestor(old_name, new_name, use_alias=None):
 
 def main():
     # TODO(benkraft): support other codemod args
+    # TODO(benkraft): Allow moving multiple symbols (from/to the same modules)
+    # at once.
     parser = argparse.ArgumentParser()
     parser.add_argument('old_name')
     parser.add_argument('new_name')
