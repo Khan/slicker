@@ -1,9 +1,17 @@
 #!/usr/bin/env python
 import argparse
 import difflib
+import os
 import re
+import sys
 
 import codemod
+
+# After importing everything else, but before importing fix_python_imports, we
+# want to add cwd to the python path, so that fix_python_imports can find what
+# modules are third-party correctly.
+# TODO(benkraft): refactor fix_python_imports so this is easier.
+sys.path.insert(0, os.getcwd())
 import fix_python_imports
 
 
