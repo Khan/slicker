@@ -1,4 +1,10 @@
+import logging
+import os
 import unittest
+import shutil
+import tempfile
+
+import codemod
 
 import slicker
 
@@ -194,3 +200,38 @@ class DetermineImportsTest(unittest.TestCase):
         with self.assertRaises(slicker.UnparsedImportError):
             slicker._determine_imports(
                 'foo.bar.baz', ['from foo import (bogus, baz)\n'])
+
+
+codemod.Patch.__repr__ = lambda self: 'Patch<%s>' % self.__dict__
+codemod.Patch.__eq__ = lambda self, other: self.__dict__ == other.__dict__
+
+
+class FullFileTest(unittest.TestCase):
+    maxDiff = None
+
+    def setUp(self):
+        self.tempdir = tempfile.mkdtemp()
+        self.origdir = os.getcwd()
+
+    def tearDown(self):
+        shutil.rmtree(self.tempdir, ignore_errors=True)
+        os.chdir(self.origdir)
+
+    def test_simple(self):
+        filename = os.path.join(self.tempdir, 'simple_in.py')
+        shutil.copy("testdata/simple_in.py", filename)
+        with open('testdata/simple_out.py') as f:
+            expected_out = f.read()
+
+        os.chdir(self.tempdir)
+        suggestor = slicker.the_suggestor(
+            'foo.some_function', 'bar.new_name')
+        path_filter = codemod.path_filter(['py'])
+        query = codemod.Query(suggestor, path_filter=path_filter,
+                              root_directory=self.tempdir)
+        codemod.base.yes_to_all = True
+        query.run_interactive()
+
+        with open(filename) as f:
+            actual_out = f.read()
+        self.assertEqual(expected_out, actual_out)
