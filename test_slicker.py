@@ -217,15 +217,13 @@ class FullFileTest(unittest.TestCase):
         shutil.rmtree(self.tempdir, ignore_errors=True)
         os.chdir(self.origdir)
 
-    def test_simple(self):
-        filename = os.path.join(self.tempdir, 'simple_in.py')
-        shutil.copy("testdata/simple_in.py", filename)
-        with open('testdata/simple_out.py') as f:
+    def run_test(self, filebase, suggestor):
+        filename = os.path.join(self.tempdir, '%s_in.py' % filebase)
+        shutil.copy("testdata/%s_in.py" % filebase, filename)
+        with open('testdata/%s_out.py' % filebase) as f:
             expected_out = f.read()
 
         os.chdir(self.tempdir)
-        suggestor = slicker.the_suggestor(
-            'foo.some_function', 'bar.new_name')
         path_filter = codemod.path_filter(['py'])
         query = codemod.Query(suggestor, path_filter=path_filter,
                               root_directory=self.tempdir)
@@ -235,3 +233,7 @@ class FullFileTest(unittest.TestCase):
         with open(filename) as f:
             actual_out = f.read()
         self.assertEqual(expected_out, actual_out)
+
+    def test_simple(self):
+        self.run_test('simple', slicker.the_suggestor(
+            'foo.some_function', 'bar.new_name'))
