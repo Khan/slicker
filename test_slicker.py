@@ -237,3 +237,7 @@ class FullFileTest(unittest.TestCase):
     def test_simple(self):
         self.run_test('simple', slicker.the_suggestor(
             'foo.some_function', 'bar.new_name'))
+
+    def test_implicit(self):
+        self.run_test('implicit', slicker.the_suggestor(
+            'foo.bar.baz.some_function', 'quux.new_name'))

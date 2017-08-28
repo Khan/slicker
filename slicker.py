@@ -283,7 +283,10 @@ def the_suggestor(old_name, new_name, use_alias=None):
             if maybe_import:
                 if maybe_import.issubset(removable_imports):
                     yield codemod.Patch(i, i+1, [])
-                elif maybe_import.issubset(maybe_removable_imports):
+                elif (maybe_import.issubset(maybe_removable_imports) and
+                      # HACK: sometimes when lines changes under us we may try
+                      # to add the comment twice.
+                      "may be used implicitly." not in line):
                     yield codemod.Patch(i, i+1, [
                         "%s  # STOPSHIP: This import may be used implicitly.\n"
                         % line.rstrip()])
