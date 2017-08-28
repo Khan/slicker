@@ -217,7 +217,7 @@ class FullFileTest(unittest.TestCase):
         shutil.rmtree(self.tempdir, ignore_errors=True)
         os.chdir(self.origdir)
 
-    def run_test(self, filebase, suggestor):
+    def run_test(self, filebase, suggestors):
         filename = os.path.join(self.tempdir, '%s_in.py' % filebase)
         shutil.copy("testdata/%s_in.py" % filebase, filename)
         with open('testdata/%s_out.py' % filebase) as f:
@@ -225,19 +225,34 @@ class FullFileTest(unittest.TestCase):
 
         os.chdir(self.tempdir)
         path_filter = codemod.path_filter(['py'])
-        query = codemod.Query(suggestor, path_filter=path_filter,
-                              root_directory=self.tempdir)
         codemod.base.yes_to_all = True
-        query.run_interactive()
+        for suggestor in suggestors:
+            query = codemod.Query(suggestor, path_filter=path_filter,
+                                  root_directory=self.tempdir)
+            query.run_interactive()
 
         with open(filename) as f:
             actual_out = f.read()
         self.assertEqual(expected_out, actual_out)
 
     def test_simple(self):
-        self.run_test('simple', slicker.the_suggestor(
-            'foo.some_function', 'bar.new_name'))
+        self.run_test('simple', [
+            slicker.the_suggestor('foo.some_function', 'bar.new_name')])
 
     def test_implicit(self):
-        self.run_test('implicit', slicker.the_suggestor(
-            'foo.bar.baz.some_function', 'quux.new_name'))
+        self.run_test('implicit', [
+            slicker.the_suggestor('foo.bar.baz.some_function',
+                                  'quux.new_name'),
+        ])
+
+    def test_slicker(self):
+        """Test on (a perhaps out of date version of) slicker itself.
+
+        It doesn't do anything super fancy, but it's a decent-sized file at
+        least.
+        """
+        self.run_test('slicker', [
+            slicker.the_suggestor('codemod.%s' % name,
+                                  'codemod_fork.%s' % name,
+                                  use_alias='the_other_codemod')
+            for name in ['Query', 'Patch', 'path_filter', 'regex_suggestor']])
