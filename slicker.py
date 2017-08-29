@@ -43,7 +43,8 @@ _COMMENT_LINE_RE = re.compile('^\s*#')
 
 
 def _re_for_name(name):
-    return re.compile(r'(?<!\.)\b%s\b' % re.escape(name))
+    return re.compile(r'(?<!\.)\b%s\b' %
+                      re.escape(name).replace(r'\.', r'\s*\.\s*'))
 
 
 class FakeOptions(object):
@@ -185,7 +186,7 @@ def the_suggestor(old_name, new_name, use_alias=None):
         # up imports either way at this point.)
         for imp in old_aliases - {final_new_module}:
             old_final_re = _re_for_name('%s.%s' % (imp, old_symbol))
-            base_suggestor = codemod.regex_suggestor(
+            base_suggestor = codemod.multiline_regex_suggestor(
                 old_final_re, final_new_name)
             for patch in base_suggestor(lines):
                 if patch.new_lines != lines[

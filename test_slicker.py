@@ -256,3 +256,9 @@ class FullFileTest(unittest.TestCase):
                                   'codemod_fork.%s' % name,
                                   use_alias='the_other_codemod')
             for name in ['Query', 'Patch', 'path_filter', 'regex_suggestor']])
+
+    def test_linebreaks(self):
+        self.run_test('linebreaks', [
+            slicker.the_suggestor('foo.bar.baz.some_function',
+                                  'quux.new_name'),
+        ])
