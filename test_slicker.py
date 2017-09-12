@@ -149,12 +149,11 @@ class DetermineImportsTest(unittest.TestCase):
             set())
         self.assertEqual(
             slicker._determine_imports(
-                'foo', ['def foo():\n'], allow_failure=True),
+                'foo', ['def foo():\n']),
             set())
         self.assertEqual(
             slicker._determine_imports(
-                'foo', ['imports are "fun" in a multiline string'],
-                allow_failure=True),
+                'foo', ['imports are "fun" in a multiline string']),
             set())
 
     def test_with_context(self):
@@ -186,11 +185,6 @@ class DetermineImportsTest(unittest.TestCase):
              ('foo.bar.baz', 'foo.bar.baz', 'foo.bar.baz'),
              ('foo.bar.baz', 'baz', 'baz'),
              ('foo.quux', 'foo.quux', 'foo.bar.baz')})
-
-    def test_unhandled_cases(self):
-        with self.assertRaises(slicker.UnparsedImportError):
-            slicker._determine_imports(
-                'foo.bar.baz', ['import bar \\', '.baz\n'])
 
 
 codemod.Patch.__repr__ = lambda self: 'Patch<%s>' % self.__dict__

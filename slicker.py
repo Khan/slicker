@@ -68,29 +68,24 @@ Import = collections.namedtuple(
     'Import', ['imported', 'imported_alias', 'module_alias'])
 
 
-def _determine_imports(module, lines, allow_failure=False):
+def _determine_imports(module, lines):
     """Returns info about the names by which the module goes in this file.
 
     Returns a set of Import namedtuples.
-
-    Raises UnparsedImportError if *any* line is something we don't handle,
-    unless allow_failure is set in which case we just return that there are no
-    imports.
     """
     module_parts = module.split('.')
     try:
         root = ast.parse(''.join(lines))
-    except SyntaxError as e:
-        if allow_failure:
-            return set()
-        else:
-            raise UnparsedImportError(lines[e.lineno - 1])
+    except SyntaxError:
+        return set()
     imports = set()
     for node in ast.walk(root):
         if isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom):
             if isinstance(node, ast.ImportFrom) and node.level != 0:
-                if not allow_failure:
-                    raise UnparsedImportError(lines[node.lineno - 1])
+                # TODO(benkraft): Figure out how to handle these!  It's
+                # unfortunately tricky for us to get the filename we're working
+                # on, so we just ignore them and cross our fingers for now.
+                continue
             for alias in node.names:
                 if isinstance(node, ast.Import):
                     name = alias.name
@@ -271,10 +266,11 @@ def the_suggestor(old_name, new_name, use_alias=None):
             return
 
         for i, line in enumerate(lines):
+            # Parse the line on its own to see if it's an import.  This is
+            # kinda fragile.  We have to strip leading indents to make it work.
             # TODO(benkraft): Track line numbers, and look for the right line
             # instead of having to guess.  It's hard because they could change.
-            maybe_imports = _determine_imports(old_module, [line],
-                                               allow_failure=True)
+            maybe_imports = _determine_imports(old_module, [line.lstrip()])
             if maybe_imports:
                 if maybe_imports.issubset(removable_imports):
                     yield codemod.Patch(i, i+1, [])
