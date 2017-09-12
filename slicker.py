@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import argparse
 import ast
+import collections
 import difflib
 import os
 import re
@@ -57,6 +58,10 @@ class UnparsedImportError(ValueError):
         self.lines = lines
 
 
+Import = collections.namedtuple(
+    'Import', ['imported', 'imported_alias', 'module_alias'])
+
+
 def _determine_imports(module, lines, allow_failure=False):
     """Returns info about the names by which the module goes in this file.
 
@@ -93,23 +98,23 @@ def _determine_imports(module, lines, allow_failure=False):
                 imported_parts = name.split('.')
                 if alias is None:
                     if imported_parts[0] == module_parts[0]:
-                        imports.add((name, name, module))
+                        imports.add(Import(name, name, module))
                 else:
                     nparts = len(imported_parts)
                     # If we imported the module, or a less-specific prefix.
                     if module_parts[:nparts] == imported_parts:
                         module_alias = '.'.join(
                             [alias] + module_parts[nparts:])
-                        imports.add((name, alias, module_alias))
+                        imports.add(Import(name, alias, module_alias))
     return imports
 
 
-def _had_any_references(module, import_names, symbol, lines):
-    for module_imported, _, alias in import_names:
-        if module_imported == module:
+def _had_any_references(module, imports, symbol, lines):
+    for imp in imports:
+        if imp.imported == module:
             # An explicit import of the module.
             return True
-        full_re = _re_for_name('%s.%s' % (alias, symbol))
+        full_re = _re_for_name('%s.%s' % (imp.module_alias, symbol))
         for line in lines:
             if full_re.search(line):
                 # A reference to the module in the body.
@@ -131,9 +136,9 @@ def the_suggestor(old_name, new_name, use_alias=None):
             # TODO(benkraft): this might not be totally safe if the existing
             # import isn't toplevel, but probably it will be.
             existing_new_imports = {
-                alias for imported_module, _, alias
+                imp.module_alias for imp
                 in _determine_imports(new_module, lines)
-                if imported_module == new_module}
+                if imp.imported == new_module}
         except UnparsedImportError as e:
             # We couldn't figure out the imports.  Stick a comment in on line 1
             # saying so, to return to the user to fix, and don't process the
@@ -146,8 +151,6 @@ def the_suggestor(old_name, new_name, use_alias=None):
                 ] + ["#    %s" % line for line in e.lines])
             return
 
-        old_aliases = {alias for _, _, alias in old_imports}
-
         # If we didn't import the module at all, nothing to do.
         if not old_imports:
             return
@@ -155,6 +158,8 @@ def the_suggestor(old_name, new_name, use_alias=None):
         # Or if we didn't reference it, and didn't explicitly import it.
         if not _had_any_references(old_module, old_imports, old_symbol, lines):
             return
+
+        old_aliases = {imp.module_alias for imp in old_imports}
 
         # If for some reason there are multiple existing aliases
         # (unlikely), choose the shortest one, to save us line-wrapping.
@@ -197,12 +202,11 @@ def the_suggestor(old_name, new_name, use_alias=None):
         # Decide whether to keep the old import if we changed references to it.
         removable_imports = set()
         maybe_removable_imports = set()
-        for import_info in old_imports:
-            imported_module, imported_alias, old_module_alias = import_info
-            if final_new_module == old_module_alias:
+        for imp in old_imports:
+            if final_new_module == imp.module_alias:
                 # If one of the old imports is for the same alias, it had
                 # better be removable!
-                removable_imports.add(import_info)
+                removable_imports.add(imp)
                 # But if we also used other names from the old import, that's
                 # real bad -- there's no way for us to automatically do the
                 # right thing.
@@ -222,13 +226,14 @@ def the_suggestor(old_name, new_name, use_alias=None):
                                    "Please fix the imports in this file "
                                    "manually.\n"])
                         return
-            elif old_module_alias in patched_aliases:
-                imported_module_re = _re_for_name(imported_alias)
-                imported_prefix_re = _re_for_name(imported_alias.split('.')[0])
+            elif imp.module_alias in patched_aliases:
+                imported_re = _re_for_name(imp.imported_alias)
+                imported_prefix_re = _re_for_name(
+                    imp.imported_alias.split('.')[0])
                 # If we explicitly reference the old module via this alias,
                 # keep the import.
                 for line in filtered_lines:
-                    if imported_module_re.search(line):
+                    if imported_re.search(line):
                         break
                 else:
                     # If we implicitly reference this import, or anything else
@@ -239,24 +244,22 @@ def the_suggestor(old_name, new_name, use_alias=None):
                         # TODO(benkraft): if this is *any* import, assume we're
                         # safe.
                         if imported_prefix_re.search(line):
-                            maybe_removable_imports.add(import_info)
+                            maybe_removable_imports.add(imp)
                             break
                     else:
-                        removable_imports.add(import_info)
+                        removable_imports.add(imp)
 
         # Now, if there was an import we were considering removing, and we are
         # keeping a different import that gets us the same things, we can
         # definitely remove the former.
         definitely_kept_imports = (old_imports - removable_imports -
                                    maybe_removable_imports)
-        for maybe_removable_import_info in list(maybe_removable_imports):
-            _, maybe_removable_imported_alias, _ = maybe_removable_import_info
-            for kept_import_info in definitely_kept_imports:
-                _, kept_imported_alias, _ = kept_import_info
-                if (maybe_removable_imported_alias.split('.')[0] ==
-                        kept_imported_alias.split('.')[0]):
-                    maybe_removable_imports.remove(maybe_removable_import_info)
-                    removable_imports.add(maybe_removable_import_info)
+        for maybe_removable_imp in list(maybe_removable_imports):
+            for kept_imp in definitely_kept_imports:
+                if (maybe_removable_imp.imported_alias.split('.')[0] ==
+                        kept_imp.imported_alias.split('.')[0]):
+                    maybe_removable_imports.remove(maybe_removable_imp)
+                    removable_imports.add(maybe_removable_imp)
                     break
 
         if (existing_new_imports and not removable_imports and
@@ -265,16 +268,18 @@ def the_suggestor(old_name, new_name, use_alias=None):
             return
 
         for i, line in enumerate(lines):
-            maybe_import = _determine_imports(old_module, [line],
-                                              allow_failure=True)
-            if maybe_import:
-                if maybe_import.issubset(removable_imports):
+            # TODO(benkraft): Track line numbers, and look for the right line
+            # instead of having to guess.
+            maybe_imports = _determine_imports(old_module, [line],
+                                               allow_failure=True)
+            if maybe_imports:
+                if maybe_imports.issubset(removable_imports):
                     yield codemod.Patch(i, i+1, [])
-                elif maybe_import.intersection(removable_imports):
+                elif maybe_imports.intersection(removable_imports):
                     yield codemod.Patch(i, i+1, [
                         "%s  # STOPSHIP: I don't know how to edit this "
                         "import.\n" % line.rstrip()])
-                elif (maybe_import.intersection(maybe_removable_imports) and
+                elif (maybe_imports.intersection(maybe_removable_imports) and
                       # HACK: sometimes when lines changes under us we may try
                       # to add the comment twice.
                       "may be used implicitly." not in line):
