@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import argparse
+import ast
 import difflib
 import os
 import re
@@ -56,7 +57,7 @@ class UnparsedImportError(ValueError):
         self.lines = lines
 
 
-def _determine_imports(module, lines):
+def _determine_imports(module, lines, allow_failure=False):
     """Returns info about the names by which the module goes in this file.
 
     Returns a set of tuples (imported module, its alias, module's alias).  For
@@ -64,59 +65,43 @@ def _determine_imports(module, lines):
     to include ('foo.bar', 'bar', 'bar.baz').  See test cases for more
     examples.
 
-    Raises UnparsedImportError if *any* line is something we don't handle.
+    Raises UnparsedImportError if *any* line is something we don't handle,
+    unless allow_failure is set in which case we just return that there are no
+    imports.
     """
     module_parts = module.split('.')
-    retval = set()
-    bad_lines = []
-    for i, line in enumerate(lines):
-        plain_import = _PLAIN_IMPORT_RE.search(line)
-        from_import = _FROM_IMPORT_RE.search(line)
-        unhandled_plain_import = _ANY_PLAIN_IMPORT_RE.search(line)
-        unhandled_from_import = _ANY_FROM_IMPORT_RE.search(line)
-        other_import = _OTHER_IMPORT_RE.search(line)
-        if plain_import:
-            imported, alias = plain_import.groups()
-        elif from_import:
-            from_module, imported, alias = from_import.groups()
-            alias = alias or imported
-            imported = '%s.%s' % (from_module, imported)
-        elif unhandled_plain_import:
-            imported_partss = [
-                imp.strip().split(' ')[0].split('.')
-                for imp in unhandled_plain_import.group(1).split(',')]
-            if any(imported_parts[0] == module_parts[0]
-                   for imported_parts in imported_partss):
-                bad_lines.append(line)
-            continue
-        elif unhandled_from_import:
-            # TODO(benkraft): check the parts to see if we care, as in
-            # unhandled plain imports.
-            imported_parts = unhandled_from_import.group(1).split('.')
-            if imported_parts == module_parts[:len(imported_parts)]:
-                bad_lines.append(line)
-            continue
-        elif other_import:
-            bad_lines.append(line)
-            continue
-        else:  # not an import
-            continue
-
-        # Check for both implicit and explicit imports
-        imported_parts = imported.split('.')
-        # We've imported the module or a prefix
-        if imported_parts == module_parts[:len(imported_parts)]:
-            if alias:
-                name = '.'.join([alias] + module_parts[len(imported_parts):])
-            else:
-                name = module
-            retval.add((imported, alias or imported, name))
-        # We've imported a module with a common prefix, and not under an alias
-        elif imported_parts[0] == module_parts[0] and not alias:
-            retval.add((imported, imported, module))
-    if bad_lines:
-        raise UnparsedImportError(bad_lines)
-    return retval
+    try:
+        root = ast.parse(''.join(lines))
+    except SyntaxError as e:
+        if allow_failure:
+            return set()
+        else:
+            raise UnparsedImportError(lines[e.lineno - 1])
+    imports = set()
+    for node in ast.walk(root):
+        if isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom):
+            if isinstance(node, ast.ImportFrom) and node.level != 0:
+                if not allow_failure:
+                    raise UnparsedImportError(lines[node.lineno - 1])
+            for alias in node.names:
+                if isinstance(node, ast.Import):
+                    name = alias.name
+                    alias = alias.asname
+                else:
+                    name = '%s.%s' % (node.module, alias.name)
+                    alias = alias.asname or alias.name
+                imported_parts = name.split('.')
+                if alias is None:
+                    if imported_parts[0] == module_parts[0]:
+                        imports.add((name, name, module))
+                else:
+                    nparts = len(imported_parts)
+                    # If we imported the module, or a less-specific prefix.
+                    if module_parts[:nparts] == imported_parts:
+                        module_alias = '.'.join(
+                            [alias] + module_parts[nparts:])
+                        imports.add((name, alias, module_alias))
+    return imports
 
 
 def _had_any_references(module, import_names, symbol, lines):
@@ -280,11 +265,16 @@ def the_suggestor(old_name, new_name, use_alias=None):
             return
 
         for i, line in enumerate(lines):
-            maybe_import = _determine_imports(old_module, [line])
+            maybe_import = _determine_imports(old_module, [line],
+                                              allow_failure=True)
             if maybe_import:
                 if maybe_import.issubset(removable_imports):
                     yield codemod.Patch(i, i+1, [])
-                elif (maybe_import.issubset(maybe_removable_imports) and
+                elif maybe_import.intersection(removable_imports):
+                    yield codemod.Patch(i, i+1, [
+                        "%s  # STOPSHIP: I don't know how to edit this "
+                        "import.\n" % line.rstrip()])
+                elif (maybe_import.intersection(maybe_removable_imports) and
                       # HACK: sometimes when lines changes under us we may try
                       # to add the comment twice.
                       "may be used implicitly." not in line):

@@ -45,6 +45,10 @@ class DetermineImportsTest(unittest.TestCase):
             slicker._determine_imports(
                 'foo.bar.baz', ['import foo.bar.quux\n']),
             {('foo.bar.quux', 'foo.bar.quux', 'foo.bar.baz')})
+        self.assertEqual(
+            slicker._determine_imports(
+                'foo.bar.baz', ['import foo.bar.baz.quux\n']),
+            {('foo.bar.baz.quux', 'foo.bar.baz.quux', 'foo.bar.baz')})
 
     def test_implicit_from_import(self):
         self.assertEqual(
@@ -90,6 +94,10 @@ class DetermineImportsTest(unittest.TestCase):
         self.assertEqual(
             slicker._determine_imports(
                 'foo.bar.baz', ['from foo.bar import quux as bogus\n']),
+            set())
+        self.assertEqual(
+            slicker._determine_imports(
+                'foo.bar.baz', ['import foo.bar.baz.quux as bogus\n']),
             set())
 
     def test_other_imports(self):
@@ -141,11 +149,12 @@ class DetermineImportsTest(unittest.TestCase):
             set())
         self.assertEqual(
             slicker._determine_imports(
-                'foo', ['def foo():\n']),
+                'foo', ['def foo():\n'], allow_failure=True),
             set())
         self.assertEqual(
             slicker._determine_imports(
-                'foo', ['imports are "fun" in a multiline string']),
+                'foo', ['imports are "fun" in a multiline string'],
+                allow_failure=True),
             set())
 
     def test_with_context(self):
@@ -181,25 +190,7 @@ class DetermineImportsTest(unittest.TestCase):
     def test_unhandled_cases(self):
         with self.assertRaises(slicker.UnparsedImportError):
             slicker._determine_imports(
-                'foo.bar.baz', ['import foo, baz\n'])
-        with self.assertRaises(slicker.UnparsedImportError):
-            slicker._determine_imports(
-                'foo.bar.baz', ['import foo as bar, baz\n'])
-        with self.assertRaises(slicker.UnparsedImportError):
-            slicker._determine_imports(
-                'foo.bar.baz', ['import foo.bogus, baz\n'])
-        with self.assertRaises(slicker.UnparsedImportError):
-            slicker._determine_imports(
                 'foo.bar.baz', ['import bar \\', '.baz\n'])
-        with self.assertRaises(slicker.UnparsedImportError):
-            slicker._determine_imports(
-                'foo.bar.baz', ['from foo import bar, baz\n'])
-        with self.assertRaises(slicker.UnparsedImportError):
-            slicker._determine_imports(
-                'foo.bar.baz', ['from foo import bogus, baz\n'])
-        with self.assertRaises(slicker.UnparsedImportError):
-            slicker._determine_imports(
-                'foo.bar.baz', ['from foo import (bogus, baz)\n'])
 
 
 codemod.Patch.__repr__ = lambda self: 'Patch<%s>' % self.__dict__
