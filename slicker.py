@@ -58,6 +58,12 @@ class UnparsedImportError(ValueError):
         self.lines = lines
 
 
+# imported: the module we actually imported.
+# imported_alias: the alias under which we imported it.
+# module_alias: the alias of the module we were looking for.
+# So if we searched for 'foo.bar.baz' and found 'from foo import bar', we'd
+# represent that as Import('foo.bar', 'bar', 'bar.baz').  See test cases for
+# more examples.
 Import = collections.namedtuple(
     'Import', ['imported', 'imported_alias', 'module_alias'])
 
@@ -65,10 +71,7 @@ Import = collections.namedtuple(
 def _determine_imports(module, lines, allow_failure=False):
     """Returns info about the names by which the module goes in this file.
 
-    Returns a set of tuples (imported module, its alias, module's alias).  For
-    example, if 'module' is foo.bar.baz, `from foo import bar` would cause us
-    to include ('foo.bar', 'bar', 'bar.baz').  See test cases for more
-    examples.
+    Returns a set of Import namedtuples.
 
     Raises UnparsedImportError if *any* line is something we don't handle,
     unless allow_failure is set in which case we just return that there are no
@@ -269,7 +272,7 @@ def the_suggestor(old_name, new_name, use_alias=None):
 
         for i, line in enumerate(lines):
             # TODO(benkraft): Track line numbers, and look for the right line
-            # instead of having to guess.
+            # instead of having to guess.  It's hard because they could change.
             maybe_imports = _determine_imports(old_module, [line],
                                                allow_failure=True)
             if maybe_imports:
