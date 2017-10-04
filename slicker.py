@@ -36,11 +36,6 @@ class FakeOptions(object):
     safe_headers = True
 
 
-class UnparsedImportError(ValueError):
-    def __init__(self, lines):
-        self.lines = lines
-
-
 # imported: the module we actually imported.
 # imported_alias: the alias under which we imported it.
 # module_alias: the alias of the module we were looking for.
@@ -139,28 +134,16 @@ def the_suggestor(old_name, new_name, use_alias=None):
         old_module, old_symbol = old_name.rsplit('.', 1)
         new_module, new_symbol = new_name.rsplit('.', 1)
 
-        try:
-            # TODO(benkraft): this isn't quite right if they are importing a
-            # symbol, rather than a module.
-            old_imports = _determine_imports(old_module, lines)
-            # Choose the alias to replace with.
-            # TODO(benkraft): this might not be totally safe if the existing
-            # import isn't toplevel, but probably it will be.
-            existing_new_imports = {
-                imp.module_alias for imp
-                in _determine_imports(new_module, lines)
-                if imp.imported == new_module}
-        except UnparsedImportError as e:
-            # We couldn't figure out the imports.  Stick a comment in on line 1
-            # saying so, to return to the user to fix, and don't process the
-            # rest of the file.
-            yield codemod.Patch(
-                0, 0, [
-                    "# STOP" "SHIP: I couldn't handle this file's imports.\n",
-                    "# Reject this change if you know it's a non-issue,\n",
-                    "# or accept and fix it up yourself.  Unhandled lines:\n",
-                ] + ["#    %s" % line for line in e.lines])
-            return
+        # TODO(benkraft): this isn't quite right if they are importing a
+        # symbol, rather than a module.
+        old_imports = _determine_imports(old_module, lines)
+        # Choose the alias to replace with.
+        # TODO(benkraft): this might not be totally safe if the existing
+        # import isn't toplevel, but probably it will be.
+        existing_new_imports = {
+            imp.module_alias for imp
+            in _determine_imports(new_module, lines)
+            if imp.imported == new_module}
 
         # If we didn't import the module at all, nothing to do.
         if not old_imports:
