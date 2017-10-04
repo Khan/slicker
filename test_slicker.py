@@ -187,6 +187,45 @@ class DetermineImportsTest(unittest.TestCase):
              ('foo.quux', 'foo.quux', 'foo.bar.baz')})
 
 
+class NamesStartingWithTest(unittest.TestCase):
+    def test_simple(self):
+        self.assertEqual(
+            slicker._names_starting_with('a', ['a\n']),
+            {'a'})
+        self.assertEqual(
+            slicker._names_starting_with('a', ['a.b.c\n']),
+            {'a', 'a.b', 'a.b.c'})
+        self.assertEqual(
+            slicker._names_starting_with('a', ['d.e.f\n']),
+            set())
+
+        self.assertEqual(
+            slicker._names_starting_with('abc', ['abc.de\n']),
+            {'abc', 'abc.de'})
+        self.assertEqual(
+            slicker._names_starting_with('ab', ['abc.de\n']),
+            set())
+
+        self.assertEqual(
+            slicker._names_starting_with('a', ['"a.b.c"\n']),
+            set())
+        self.assertEqual(
+            slicker._names_starting_with('a', ['import a.b.c\n']),
+            set())
+        self.assertEqual(
+            slicker._names_starting_with('a', ['b.c.a.b.c\n']),
+            set())
+
+    def test_in_context(self):
+        self.assertEqual(
+            slicker._names_starting_with('a', [
+                'def abc():\n',
+                '    if a.b == a.c:\n',
+                '        return a.d(a.e + a.f)\n',
+                'abc(a.g)\n']),
+            {'a', 'a.b', 'a.c', 'a.d', 'a.e', 'a.f', 'a.g'})
+
+
 codemod.Patch.__repr__ = lambda self: 'Patch<%s>' % self.__dict__
 codemod.Patch.__eq__ = lambda self, other: self.__dict__ == other.__dict__
 

@@ -58,6 +58,7 @@ def _determine_imports(module, lines):
     """
     module_parts = module.split('.')
     try:
+        # TODO(benkraft): cache the AST.
         root = ast.parse(''.join(lines))
     except SyntaxError:
         return set()
@@ -88,6 +89,35 @@ def _determine_imports(module, lines):
                             [alias] + module_parts[nparts:])
                         imports.add(Import(name, alias, module_alias))
     return imports
+
+
+def _name_for_node(node):
+    """Return the dotted name of an AST node, if there's a reasonable one.
+
+    This only does anything interesting for Name and Attribute, and for
+    Attribute only if it's like a.b.c, not (a + b).c.
+    """
+    if isinstance(node, ast.Name):
+        return node.id
+    elif isinstance(node, ast.Attribute):
+        value = _name_for_node(node.value)
+        if value:
+            return '%s.%s' % (value, node.attr)
+
+
+def _names_starting_with(prefix, lines):
+    """Returns all dotted names in the file beginning with 'prefix'.
+
+    Does not include imports or string references or anything else funky like
+    that.  Includes prefixes, so if you do a.b.c and ask for things beginning
+    with a, we'll return {'a', 'a.b', 'a.b.c'}.  "Beginning with prefix" of
+    course means in the sense of a dotted prefix, that is, abc is a prefix of
+    abc.de but not abcde.ghi.
+    """
+    root = ast.parse(''.join(lines))
+    all_names = (_name_for_node(node) for node in ast.walk(root))
+    return {name for name in all_names
+            if name and (name == prefix or name.startswith('%s.' % prefix))}
 
 
 def _had_any_references(module, imports, symbol, lines):
