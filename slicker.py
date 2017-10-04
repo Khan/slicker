@@ -21,23 +21,6 @@ import fix_python_imports
 EXCLUDE_PATHS = ['third_party', 'genfiles']
 
 
-_PLAIN_IMPORT_RE = re.compile(
-    r'^\s*import +([\w.]*)(?: +as +(\w*))?\s*(?:$|#)')
-_FROM_IMPORT_RE = re.compile(
-    r'^\s*from +([\w.]*) +import +(\w*)(?: +as +(\w*))?\s*(?:$|#)')
-# Things we don't handle:
-# - imports with internal spaces (very rare and mildly annoying to deal with)
-# - imports with comma (easy to parse, hard to decide what to keep/modify)
-# - from foo import *
-# - imports with \ or ( (hard to parse right)
-_ANY_PLAIN_IMPORT_RE = re.compile(
-    r'^\s*import +([\w., ]*)(?: +as +(\w*))?\s*(?:$|#)')
-_ANY_FROM_IMPORT_RE = re.compile(r'^\s*from +([\w.]*) +import\b')
-# We try to make this have no false negatives but minimize false positives.
-# TODO(benkraft): semicolons can cause false negatives :(
-_OTHER_IMPORT_RE = re.compile(r'''^\s*(from +[^#"'()]*(\\|import\b)|'''
-                              r'''import +[^#"'()]*\\)''')
-
 # Very aggressive in what it finds.
 _ANY_IMPORT_RE = re.compile(r'^\s*(from|import)\b')
 _LEADING_WHITESPACE_RE = re.compile('^(\s*)(\S|$)')
