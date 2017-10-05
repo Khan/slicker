@@ -1,6 +1,6 @@
-import foo
+import foo.bar
 
 
 def f():
-    foo.boring_function()
-    foo.interesting_function()
+    foo.bar.boring_function()
+    foo.bar.interesting_function()

@@ -1,4 +1,3 @@
-import logging
 import os
 import unittest
 import shutil
@@ -327,7 +326,13 @@ class FullFileTest(unittest.TestCase):
 
     def test_conflict(self):
         self.run_test('conflict', [
-            slicker.the_suggestor('foo.interesting_function',
+            slicker.the_suggestor('foo.bar.interesting_function',
                                   'bar.interesting_function',
                                   use_alias='foo'),
+        ])
+
+    def test_conflict_2(self):
+        self.run_test('conflict_2', [
+            slicker.the_suggestor('bar.interesting_function',
+                                  'foo.bar.interesting_function')
         ])

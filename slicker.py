@@ -43,12 +43,11 @@ Import = collections.namedtuple(
     'Import', ['imported', 'imported_alias', 'module_alias'])
 
 
-def _determine_imports(module, lines):
-    """Returns info about the names by which the module goes in this file.
+def _compute_all_imports(lines):
+    """Returns info about the imports in this file.
 
-    Returns a set of Import namedtuples.
+    Returns a set of pairs (name, imported as).
     """
-    module_parts = module.split('.')
     try:
         # TODO(benkraft): cache the AST.
         root = ast.parse(''.join(lines))
@@ -64,22 +63,32 @@ def _determine_imports(module, lines):
                 continue
             for alias in node.names:
                 if isinstance(node, ast.Import):
-                    name = alias.name
-                    alias = alias.asname
+                    imports.add((alias.name, alias.asname or alias.name))
                 else:
-                    name = '%s.%s' % (node.module, alias.name)
-                    alias = alias.asname or alias.name
-                imported_parts = name.split('.')
-                if alias is None:
-                    if imported_parts[0] == module_parts[0]:
-                        imports.add(Import(name, name, module))
-                else:
-                    nparts = len(imported_parts)
-                    # If we imported the module, or a less-specific prefix.
-                    if module_parts[:nparts] == imported_parts:
-                        module_alias = '.'.join(
-                            [alias] + module_parts[nparts:])
-                        imports.add(Import(name, alias, module_alias))
+                    imports.add(('%s.%s' % (node.module, alias.name),
+                                 alias.asname or alias.name))
+    return imports
+
+
+def _determine_imports(module, lines):
+    """Returns info about the names by which the module goes in this file.
+
+    Returns a set of Import namedtuples.
+    """
+    imports = set()
+    module_parts = module.split('.')
+    for name, alias in _compute_all_imports(lines):
+        imported_parts = name.split('.')
+        if alias == name:
+            if imported_parts[0] == module_parts[0]:
+                imports.add(Import(name, name, module))
+        else:
+            nparts = len(imported_parts)
+            # If we imported the module, or a less-specific prefix.
+            if module_parts[:nparts] == imported_parts:
+                module_alias = '.'.join(
+                    [alias] + module_parts[nparts:])
+                imports.add(Import(name, alias, module_alias))
     return imports
 
 
@@ -137,6 +146,27 @@ def _had_any_references(module, imports, symbol, lines):
         return bool(_names_starting_with(module, lines))
 
 
+def _check_import_conflicts(lines, added_name, is_alias):
+    """Return any imports that will conflict with ours.
+
+    TODO(benkraft): If that's due to our alias, we could avoid using
+    said alias.
+    TODO(benkraft): Also check if there are variable-names that
+    collide.
+    """
+    imports = _compute_all_imports(lines)
+    if is_alias:
+        # If we are importing with an alias, we're looking for existing
+        # imports with whose prefix we collide.
+        return {name for name, alias in imports
+                if _dotted_starts_with(alias, added_name)}
+    else:
+        # If we aren't importing with an alias, we're looking for
+        # existing imports who are a prefix of us.
+        return {name for name, alias in imports
+                if _dotted_starts_with(added_name, alias)}
+
+
 def the_suggestor(old_name, new_name, use_alias=None):
     def suggestor(lines):
         # TODO(benkraft): This is super ginormous by now, break it up.
@@ -173,6 +203,17 @@ def the_suggestor(old_name, new_name, use_alias=None):
         else:
             final_new_module = use_alias or new_module
 
+            dupe_imports = _check_import_conflicts(
+                lines, final_new_module, bool(use_alias))
+            if dupe_imports:
+                yield codemod.Patch(
+                    0, 0,
+                    ["# STOP" "SHIP: Your alias will conflict with the "
+                     "following imports:\n"] +
+                    ["#    %s\n" % imp for imp in dupe_imports] +
+                    ["# Not touching this file.\n"])
+                return
+
         final_new_name = '%s.%s' % (final_new_module, new_symbol)
 
         patched_aliases = set()
@@ -207,28 +248,8 @@ def the_suggestor(old_name, new_name, use_alias=None):
                 continue
             elif final_new_module == imp.module_alias:
                 # If one of the old imports is for the same alias, it had
-                # better be removable!
+                # better be removable!  (We've already checked for conflicts.)
                 removable_imports.add(imp)
-                # But if we also used other names from the old import, that's
-                # real bad -- there's no way for us to automatically do the
-                # right thing.
-                # TODO(benkraft): We don't really handle it if you referenced
-                # the entire old module in some way, other than looking up
-                # another attr on it.
-                bad_names = {
-                    name for name in _names_starting_with(
-                        final_new_module, lines) - {final_new_module}
-                    if not _dotted_starts_with(name, final_new_name)}
-                if bad_names:
-                    yield codemod.Patch(
-                        0, 0,
-                        ["# STOP" "SHIP: Your alias will result in "
-                         "import conflicts for these symbols:\n"] +
-                        ["#    %s\n" % name for name in bad_names] +
-                        ["# Please fix the imports in this file manually.\n"])
-                    # This can only happen once, and we want to let them finish
-                    # things manually.
-                    return
             elif imp.module_alias in patched_aliases:
                 # Anything starting with the relevant prefix.
                 relevant_names = _names_starting_with(

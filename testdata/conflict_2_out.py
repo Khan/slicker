@@ -1,9 +1,10 @@
 # STOPSHIP: Your alias will conflict with the following imports:
-#    foo.bar
+#    quux
 # Not touching this file.
-import foo.bar
+import quux as foo
+import bar
 
 
 def f():
-    foo.bar.boring_function()
-    foo.bar.interesting_function()
+    foo.boring_function()
+    bar.interesting_function()
