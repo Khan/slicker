@@ -143,7 +143,9 @@ def _had_any_references(module, imports, symbol, lines):
         if imp.imported == module:
             # An explicit import of the module.
             return True
-        return bool(_names_starting_with(module, lines))
+        if bool(_names_starting_with(module, lines)):
+            return True
+    return False
 
 
 def _check_import_conflicts(lines, added_name, is_alias):

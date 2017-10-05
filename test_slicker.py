@@ -341,3 +341,7 @@ class FullFileTest(unittest.TestCase):
         self.run_test('unused', [
             slicker.the_suggestor('foo.bar.some_function',
                                   'quux.some_function')])
+
+    def test_many_imports(self):
+        self.run_test('many_imports', [
+            slicker.the_suggestor('foo.quux.replaceme', 'baz.replaced')])
