@@ -187,6 +187,33 @@ class DetermineImportsTest(unittest.TestCase):
              ('foo.quux', 'foo.quux', 'foo.bar.baz')})
 
 
+class DottedPrefixTest(unittest.TestCase):
+    def test_dotted_starts_with(self):
+        self.assertTrue(slicker._dotted_starts_with('abc', 'abc'))
+        self.assertTrue(slicker._dotted_starts_with('abc.de', 'abc'))
+        self.assertTrue(slicker._dotted_starts_with('abc.de', 'abc.de'))
+        self.assertTrue(slicker._dotted_starts_with('abc.de.fg', 'abc'))
+        self.assertTrue(slicker._dotted_starts_with('abc.de.fg', 'abc.de'))
+        self.assertTrue(slicker._dotted_starts_with('abc.de.fg', 'abc.de.fg'))
+        self.assertFalse(slicker._dotted_starts_with('abc', 'd'))
+        self.assertFalse(slicker._dotted_starts_with('abc', 'ab'))
+        self.assertFalse(slicker._dotted_starts_with('abc', 'abc.de'))
+        self.assertFalse(slicker._dotted_starts_with('abc.de', 'ab'))
+        self.assertFalse(slicker._dotted_starts_with('abc.de', 'abc.d'))
+        self.assertFalse(slicker._dotted_starts_with('abc.de', 'abc.h'))
+
+    def test_dotted_prefixes(self):
+        self.assertItemsEqual(
+            slicker._dotted_prefixes('abc'),
+            ['abc'])
+        self.assertItemsEqual(
+            slicker._dotted_prefixes('abc.def'),
+            ['abc', 'abc.def'])
+        self.assertItemsEqual(
+            slicker._dotted_prefixes('abc.def.ghi'),
+            ['abc', 'abc.def', 'abc.def.ghi'])
+
+
 class NamesStartingWithTest(unittest.TestCase):
     def test_simple(self):
         self.assertEqual(
@@ -263,8 +290,19 @@ class FullFileTest(unittest.TestCase):
         self.run_test('simple', [
             slicker.the_suggestor('foo.some_function', 'bar.new_name')])
 
+    def test_same_prefix(self):
+        self.run_test('same_prefix', [
+            slicker.the_suggestor('foo.bar.some_function',
+                                  'foo.baz.some_function')])
+
     def test_implicit(self):
         self.run_test('implicit', [
+            slicker.the_suggestor('foo.bar.baz.some_function',
+                                  'quux.new_name'),
+        ])
+
+    def test_double_implicit(self):
+        self.run_test('double_implicit', [
             slicker.the_suggestor('foo.bar.baz.some_function',
                                   'quux.new_name'),
         ])
@@ -285,4 +323,11 @@ class FullFileTest(unittest.TestCase):
         self.run_test('linebreaks', [
             slicker.the_suggestor('foo.bar.baz.some_function',
                                   'quux.new_name'),
+        ])
+
+    def test_conflict(self):
+        self.run_test('conflict', [
+            slicker.the_suggestor('foo.interesting_function',
+                                  'bar.interesting_function',
+                                  use_alias='foo'),
         ])

@@ -21,10 +21,7 @@ import fix_python_imports
 EXCLUDE_PATHS = ['third_party', 'genfiles']
 
 
-# Very aggressive in what it finds.
-_ANY_IMPORT_RE = re.compile(r'^\s*(from|import)\b')
 _LEADING_WHITESPACE_RE = re.compile('^(\s*)(\S|$)')
-_COMMENT_LINE_RE = re.compile('^\s*#')
 
 
 def _re_for_name(name):
@@ -86,6 +83,24 @@ def _determine_imports(module, lines):
     return imports
 
 
+def _dotted_starts_with(string, prefix):
+    """Like string.startswith(prefix), but in the dotted sense.
+
+    That is, abc is a prefix of abc.de but not abcde.ghi.
+    """
+    return prefix == string or string.startswith('%s.' % prefix)
+
+
+def _dotted_prefixes(string):
+    """All prefixes of string, in the dotted sense.
+
+    That is, all strings p such that _dotted_starts_with(string, p).
+    """
+    string_parts = string.split('.')
+    for i in xrange(len(string_parts)):
+        yield '.'.join(string_parts[:i + 1])
+
+
 def _name_for_node(node):
     """Return the dotted name of an AST node, if there's a reasonable one.
 
@@ -105,14 +120,13 @@ def _names_starting_with(prefix, lines):
 
     Does not include imports or string references or anything else funky like
     that.  Includes prefixes, so if you do a.b.c and ask for things beginning
-    with a, we'll return {'a', 'a.b', 'a.b.c'}.  "Beginning with prefix" of
-    course means in the sense of a dotted prefix, that is, abc is a prefix of
-    abc.de but not abcde.ghi.
+    with a, we'll return {'a', 'a.b', 'a.b.c'}.  "Beginning with prefix" in the
+    dotted sense (see _dotted_starts_with).
     """
     root = ast.parse(''.join(lines))
     all_names = (_name_for_node(node) for node in ast.walk(root))
     return {name for name in all_names
-            if name and (name == prefix or name.startswith('%s.' % prefix))}
+            if name and _dotted_starts_with(name, prefix)}
 
 
 def _had_any_references(module, imports, symbol, lines):
@@ -120,12 +134,7 @@ def _had_any_references(module, imports, symbol, lines):
         if imp.imported == module:
             # An explicit import of the module.
             return True
-        full_re = _re_for_name('%s.%s' % (imp.module_alias, symbol))
-        for line in lines:
-            if full_re.search(line):
-                # A reference to the module in the body.
-                return True
-    return False
+        return bool(_names_starting_with(module, lines))
 
 
 def the_suggestor(old_name, new_name, use_alias=None):
@@ -150,6 +159,7 @@ def the_suggestor(old_name, new_name, use_alias=None):
             return
 
         # Or if we didn't reference it, and didn't explicitly import it.
+        # TODO(benkraft): We should still look for mocks and such here.
         if not _had_any_references(old_module, old_imports, old_symbol, lines):
             return
 
@@ -188,60 +198,59 @@ def the_suggestor(old_name, new_name, use_alias=None):
         if not patched_aliases and final_new_module not in old_aliases:
             return
 
-        # Lines that aren't imports, comments, or references to the new name.
-        filtered_lines = [line for line in lines
-                          if not _ANY_IMPORT_RE.search(line) and
-                          not _COMMENT_LINE_RE.search(line)]
-
         # Decide whether to keep the old import if we changed references to it.
         removable_imports = set()
         maybe_removable_imports = set()
         for imp in old_imports:
-            if final_new_module == imp.module_alias:
+            if imp.module_alias in existing_new_imports:
+                # This is the existing new import!  Don't touch it.
+                continue
+            elif final_new_module == imp.module_alias:
                 # If one of the old imports is for the same alias, it had
                 # better be removable!
                 removable_imports.add(imp)
                 # But if we also used other names from the old import, that's
                 # real bad -- there's no way for us to automatically do the
                 # right thing.
-                final_new_name_re = _re_for_name(final_new_name)
-                final_new_module_re = _re_for_name(final_new_module)
-                for line in filtered_lines:
-                    # If we refer to the alias, and are not a reference to the
-                    # moved symbol, nor an import, nor a comment.
-                    # TODO(benkraft): this won't work quite right with multiple
-                    # references in one line.
-                    if (final_new_module_re.search(line) and
-                            not final_new_name_re(line)):
-                        yield codemod.Patch(
-                            0, 0, ["# STOP" "SHIP: Your alias will result in "
-                                   "import conflicts on this line:\n",
-                                   "#    %s" % line,
-                                   "Please fix the imports in this file "
-                                   "manually.\n"])
-                        return
+                # TODO(benkraft): We don't really handle it if you referenced
+                # the entire old module in some way, other than looking up
+                # another attr on it.
+                bad_names = {
+                    name for name in _names_starting_with(
+                        final_new_module, lines) - {final_new_module}
+                    if not _dotted_starts_with(name, final_new_name)}
+                if bad_names:
+                    yield codemod.Patch(
+                        0, 0,
+                        ["# STOP" "SHIP: Your alias will result in "
+                         "import conflicts for these symbols:\n"] +
+                        ["#    %s\n" % name for name in bad_names] +
+                        ["# Please fix the imports in this file manually.\n"])
+                    # This can only happen once, and we want to let them finish
+                    # things manually.
+                    return
             elif imp.module_alias in patched_aliases:
-                imported_re = _re_for_name(imp.imported_alias)
-                imported_prefix_re = _re_for_name(
-                    imp.imported_alias.split('.')[0])
+                # Anything starting with the relevant prefix.
+                relevant_names = _names_starting_with(
+                    imp.imported_alias.split('.')[0], lines)
+                explicit_names = {
+                    name for name in relevant_names
+                    if _dotted_starts_with(name, imp.imported_alias)}
+                handled_names = {
+                    name for name in relevant_names
+                    if any(_dotted_starts_with(name, prefix)
+                           for prefix in _dotted_prefixes(final_new_module))}
+
                 # If we explicitly reference the old module via this alias,
                 # keep the import.
-                for line in filtered_lines:
-                    if imported_re.search(line):
-                        break
+                if explicit_names:
+                    break
+                # If we implicitly reference this import, and the new import
+                # will not take care of it, we need to ask the user what to do.
+                elif relevant_names - explicit_names - handled_names:
+                    maybe_removable_imports.add(imp)
                 else:
-                    # If we implicitly reference this import, or anything else
-                    # that came with it, we may need to keep the import,
-                    # because it may have brought something else along.  Ask
-                    # the user.
-                    for line in filtered_lines:
-                        # TODO(benkraft): if this is *any* import, assume we're
-                        # safe.
-                        if imported_prefix_re.search(line):
-                            maybe_removable_imports.add(imp)
-                            break
-                    else:
-                        removable_imports.add(imp)
+                    removable_imports.add(imp)
 
         # Now, if there was an import we were considering removing, and we are
         # keeping a different import that gets us the same things, we can
