@@ -311,12 +311,18 @@ def the_suggestor(old_name, new_name, use_alias=None):
             # We made changes, but still don't need to fix any imports.
             return
 
+        had_explicit_import = any(
+            imp.imported == old_module for imp in old_imports)
+        added_on_lines = set()
         for i, line in enumerate(lines):
             # Parse the line on its own to see if it's an import.  This is
             # kinda fragile.  We have to strip leading indents to make it work.
             # TODO(benkraft): Track line numbers, and look for the right line
             # instead of having to guess.  It's hard because they could change.
+            # TODO(benkraft): This doesn't handle multiline imports quite
+            # correctly.
             maybe_imports = _determine_imports(old_module, [line.lstrip()])
+            removed_import = False
             if maybe_imports:
                 # Consider whether to remove the import.
                 if ('@UnusedImport' in line or
@@ -324,6 +330,7 @@ def the_suggestor(old_name, new_name, use_alias=None):
                     # Never remove a deliberately unused import.
                     pass
                 elif maybe_imports.issubset(removable_imports):
+                    removed_import = True
                     yield codemod.Patch(i, i+1, [])
                 elif maybe_imports.intersection(removable_imports):
                     yield codemod.Patch(i, i+1, [
@@ -337,8 +344,36 @@ def the_suggestor(old_name, new_name, use_alias=None):
                         "%s  # STOPSHIP: This import may be used implicitly.\n"
                         % line.rstrip()])
 
+                # HACK: if we added an import on the previous line, don't add
+                # one here -- there's no way we need it.  This mitigates the
+                # issue where sometimes we process a line again because we
+                # added a line just before it (and didn't delete it).  It
+                # doesn't totally solve the issue, in the case where the user
+                # did a manual edit, but hopefully in that case they are paying
+                # attention.
+                if i - 1 in added_on_lines:
+                    continue
+
                 # Consider whether to add an import.
-                if not existing_new_imports:
+                # If there previously existed an explicit import, we add at the
+                # location of each explicit import, and only those.  If not, we
+                # add at the first implicit import only.
+                # TODO(benkraft): This doesn't work correctly in the case where
+                # there was an implicit toplevel import, and an explicit late
+                # import, and the moved symbol was used outside the scope of
+                # the late import.  To handle this case, we'll need to do much
+                # more careful tracing of which imports exist in which scopes.
+                is_explicit = any(
+                    imp.imported == old_module for imp in maybe_imports)
+                # HACK: if we are processing a line that looks identical to the
+                # immediately previous one, we don't add anything for it -- we
+                # may just be seeing the same line again, because we added a
+                # line in front of it.
+                # TODO(benkraft): If the user has edited the patches to add two
+                # lines, this won't work, but hopefully in that case they will
+                # notice what's going on and bail.
+                if not existing_new_imports and (
+                        is_explicit or not had_explicit_import):
                     if '.' in new_module and use_alias:
                         base, suffix = new_module.rsplit('.', 1)
                         if use_alias == suffix:
@@ -355,10 +390,18 @@ def the_suggestor(old_name, new_name, use_alias=None):
 
                     # We keep the same indentation-level.
                     indent = _LEADING_WHITESPACE_RE.search(line).group(1)
-                    comment = _FINAL_COMMENT_RE.search(line).group(0)
+                    # If we removed an import here, grab its comment.
+                    if removed_import:
+                        comment = _FINAL_COMMENT_RE.search(line).group(0)
+                    else:
+                        comment = ''
                     yield codemod.Patch(
                         i, i, ['%s%s%s\n' % (indent, import_stmt, comment)])
-                    existing_new_imports.add(new_module)  # only do this once
+                    added_on_lines.add(i)
+                    if not is_explicit:
+                        # If we are adding at implicit imports, only do so for
+                        # the first one.
+                        existing_new_imports.add(new_module)
 
         # PART THE FOURTH:
         #    Resort imports, if necessary.
