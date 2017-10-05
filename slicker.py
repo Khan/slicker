@@ -221,6 +221,9 @@ def _imports_to_remove(old_imports, existing_new_imports, new_alias,
 
 def the_suggestor(old_name, new_name, use_alias=None):
     def suggestor(lines):
+        # PART THE FIRST:
+        #    Set things up, do some simple checks, decide whether to operate.
+
         # TODO(benkraft): This is super ginormous by now, break it up.
         old_module, old_symbol = old_name.rsplit('.', 1)
         new_module, new_symbol = new_name.rsplit('.', 1)
@@ -268,6 +271,9 @@ def the_suggestor(old_name, new_name, use_alias=None):
 
         final_new_name = '%s.%s' % (final_new_module, new_symbol)
 
+        # PART THE SECOND:
+        #    Patch references to the symbol inline -- everything but imports.
+
         patched_aliases = set()
         # If any alias changed, we need to fix up references.  (We'll fix
         # up imports either way at this point.)
@@ -281,7 +287,9 @@ def the_suggestor(old_name, new_name, use_alias=None):
                     patched_aliases.add(imp)
                     yield patch
 
-        # Next, fix up imports.  Don't bother if the file didn't move modules.
+        # PART THE THIRD:
+        #    Add/remove imports, if necessary.
+
         if old_module == new_module:
             return
 
@@ -341,6 +349,9 @@ def the_suggestor(old_name, new_name, use_alias=None):
                     yield codemod.Patch(
                         i, i, ['%s%s\n' % (indent, import_stmt)])
                     existing_new_imports.add(new_module)  # only do this once
+
+        # PART THE FOURTH:
+        #    Resort imports, if necessary.
 
         # TODO(benkraft): merge this with the import-adding, so we just show
         # one diff to add in the right place, unless there is additional
