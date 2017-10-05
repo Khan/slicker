@@ -315,7 +315,12 @@ def the_suggestor(old_name, new_name, use_alias=None):
             # instead of having to guess.  It's hard because they could change.
             maybe_imports = _determine_imports(old_module, [line.lstrip()])
             if maybe_imports:
-                if maybe_imports.issubset(removable_imports):
+                # Consider whether to remove the import.
+                if ('@UnusedImport' in line or
+                        '@Nolint' in line and 'unused' in line):
+                    # Never remove a deliberately unused import.
+                    pass
+                elif maybe_imports.issubset(removable_imports):
                     yield codemod.Patch(i, i+1, [])
                 elif maybe_imports.intersection(removable_imports):
                     yield codemod.Patch(i, i+1, [
@@ -329,6 +334,7 @@ def the_suggestor(old_name, new_name, use_alias=None):
                         "%s  # STOPSHIP: This import may be used implicitly.\n"
                         % line.rstrip()])
 
+                # Consider whether to add an import.
                 if not existing_new_imports:
                     if '.' in new_module and use_alias:
                         base, suffix = new_module.rsplit('.', 1)

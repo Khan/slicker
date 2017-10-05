@@ -336,3 +336,8 @@ class FullFileTest(unittest.TestCase):
             slicker.the_suggestor('bar.interesting_function',
                                   'foo.bar.interesting_function')
         ])
+
+    def test_unused(self):
+        self.run_test('unused', [
+            slicker.the_suggestor('foo.bar.some_function',
+                                  'quux.some_function')])
