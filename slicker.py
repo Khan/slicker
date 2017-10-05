@@ -22,6 +22,7 @@ EXCLUDE_PATHS = ['third_party', 'genfiles']
 
 
 _LEADING_WHITESPACE_RE = re.compile('^(\s*)(\S|$)')
+_FINAL_COMMENT_RE = re.compile('(\s*#.*)?$')
 
 
 def _re_for_name(name):
@@ -354,8 +355,9 @@ def the_suggestor(old_name, new_name, use_alias=None):
 
                     # We keep the same indentation-level.
                     indent = _LEADING_WHITESPACE_RE.search(line).group(1)
+                    comment = _FINAL_COMMENT_RE.search(line).group(0)
                     yield codemod.Patch(
-                        i, i, ['%s%s\n' % (indent, import_stmt)])
+                        i, i, ['%s%s%s\n' % (indent, import_stmt, comment)])
                     existing_new_imports.add(new_module)  # only do this once
 
         # PART THE FOURTH:
