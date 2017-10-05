@@ -167,6 +167,58 @@ def _check_import_conflicts(lines, added_name, is_alias):
                 if _dotted_starts_with(added_name, alias)}
 
 
+def _imports_to_remove(old_imports, existing_new_imports, new_alias,
+                       patched_aliases, lines):
+    # Decide whether to keep the old import if we changed references to it.
+    removable_imports = set()
+    maybe_removable_imports = set()
+    for imp in old_imports:
+        if imp.module_alias in existing_new_imports:
+            # This is the existing new import!  Don't touch it.
+            continue
+        elif new_alias == imp.module_alias:
+            # If one of the old imports is for the same alias, it had
+            # better be removable!  (We've already checked for conflicts.)
+            removable_imports.add(imp)
+        elif imp.module_alias in patched_aliases:
+            # Anything starting with the relevant prefix.
+            relevant_names = _names_starting_with(
+                imp.imported_alias.split('.')[0], lines)
+            explicit_names = {
+                name for name in relevant_names
+                if _dotted_starts_with(name, imp.imported_alias)}
+            handled_names = {
+                name for name in relevant_names
+                if any(_dotted_starts_with(name, prefix)
+                       for prefix in _dotted_prefixes(new_alias))}
+
+            # If we explicitly reference the old module via this alias,
+            # keep the import.
+            if explicit_names:
+                break
+            # If we implicitly reference this import, and the new import
+            # will not take care of it, we need to ask the user what to do.
+            elif relevant_names - explicit_names - handled_names:
+                maybe_removable_imports.add(imp)
+            else:
+                removable_imports.add(imp)
+
+    # Now, if there was an import we were considering removing, and we are
+    # keeping a different import that gets us the same things, we can
+    # definitely remove the former.
+    definitely_kept_imports = (old_imports - removable_imports -
+                               maybe_removable_imports)
+    for maybe_removable_imp in list(maybe_removable_imports):
+        for kept_imp in definitely_kept_imports:
+            if (maybe_removable_imp.imported_alias.split('.')[0] ==
+                    kept_imp.imported_alias.split('.')[0]):
+                maybe_removable_imports.remove(maybe_removable_imp)
+                removable_imports.add(maybe_removable_imp)
+                break
+
+    return removable_imports, maybe_removable_imports
+
+
 def the_suggestor(old_name, new_name, use_alias=None):
     def suggestor(lines):
         # TODO(benkraft): This is super ginormous by now, break it up.
@@ -239,52 +291,9 @@ def the_suggestor(old_name, new_name, use_alias=None):
         if not patched_aliases and final_new_module not in old_aliases:
             return
 
-        # Decide whether to keep the old import if we changed references to it.
-        removable_imports = set()
-        maybe_removable_imports = set()
-        for imp in old_imports:
-            if imp.module_alias in existing_new_imports:
-                # This is the existing new import!  Don't touch it.
-                continue
-            elif final_new_module == imp.module_alias:
-                # If one of the old imports is for the same alias, it had
-                # better be removable!  (We've already checked for conflicts.)
-                removable_imports.add(imp)
-            elif imp.module_alias in patched_aliases:
-                # Anything starting with the relevant prefix.
-                relevant_names = _names_starting_with(
-                    imp.imported_alias.split('.')[0], lines)
-                explicit_names = {
-                    name for name in relevant_names
-                    if _dotted_starts_with(name, imp.imported_alias)}
-                handled_names = {
-                    name for name in relevant_names
-                    if any(_dotted_starts_with(name, prefix)
-                           for prefix in _dotted_prefixes(final_new_module))}
-
-                # If we explicitly reference the old module via this alias,
-                # keep the import.
-                if explicit_names:
-                    break
-                # If we implicitly reference this import, and the new import
-                # will not take care of it, we need to ask the user what to do.
-                elif relevant_names - explicit_names - handled_names:
-                    maybe_removable_imports.add(imp)
-                else:
-                    removable_imports.add(imp)
-
-        # Now, if there was an import we were considering removing, and we are
-        # keeping a different import that gets us the same things, we can
-        # definitely remove the former.
-        definitely_kept_imports = (old_imports - removable_imports -
-                                   maybe_removable_imports)
-        for maybe_removable_imp in list(maybe_removable_imports):
-            for kept_imp in definitely_kept_imports:
-                if (maybe_removable_imp.imported_alias.split('.')[0] ==
-                        kept_imp.imported_alias.split('.')[0]):
-                    maybe_removable_imports.remove(maybe_removable_imp)
-                    removable_imports.add(maybe_removable_imp)
-                    break
+        removable_imports, maybe_removable_imports = _imports_to_remove(
+            old_imports, existing_new_imports, final_new_module,
+            patched_aliases, lines)
 
         if (existing_new_imports and not removable_imports and
                 not maybe_removable_imports):
