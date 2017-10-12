@@ -348,6 +348,7 @@ def the_suggestor(old_name, new_name, use_alias=None):
 
 
 def main():
+    # NOTE(benkraft): We really shouldn't fix the following comment, but we do.
     # TODO(benkraft): support other codemod args
     # TODO(benkraft): Allow moving multiple symbols (from/to the same modules)
     # at once.

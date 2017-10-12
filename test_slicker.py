@@ -267,7 +267,7 @@ class FullFileTest(unittest.TestCase):
         shutil.rmtree(self.tempdir, ignore_errors=True)
         os.chdir(self.origdir)
 
-    def run_test(self, filebase, suggestors):
+    def run_test(self, filebase, suggestor):
         filename = os.path.join(self.tempdir, '%s_in.py' % filebase)
         shutil.copy("testdata/%s_in.py" % filebase, filename)
         with open('testdata/%s_out.py' % filebase) as f:
@@ -276,35 +276,46 @@ class FullFileTest(unittest.TestCase):
         os.chdir(self.tempdir)
         path_filter = codemod.path_filter(['py'])
         codemod.base.yes_to_all = True
-        for suggestor in suggestors:
-            query = codemod.Query(suggestor, path_filter=path_filter,
-                                  root_directory=self.tempdir)
-            query.run_interactive()
+        query = codemod.Query(suggestor, path_filter=path_filter,
+                              root_directory=self.tempdir)
+        query.run_interactive()
 
         with open(filename) as f:
             actual_out = f.read()
         self.assertEqual(expected_out, actual_out)
 
     def test_simple(self):
-        self.run_test('simple', [
-            slicker.the_suggestor('foo.some_function', 'bar.new_name')])
+        self.run_test(
+            'simple',
+            slicker.the_suggestor('foo.some_function', 'bar.new_name', 'bar'))
+
+    def test_whole_file(self):
+        self.run_test(
+            'whole_file',
+            slicker.the_suggestor('foo', 'bar', 'bar'))
+
+    def test_whole_file_alias(self):
+        self.run_test(
+            'whole_file_alias',
+            slicker.the_suggestor('foo', 'bar', 'bar', use_alias='baz'))
 
     def test_same_prefix(self):
-        self.run_test('same_prefix', [
+        self.run_test(
+            'same_prefix',
             slicker.the_suggestor('foo.bar.some_function',
-                                  'foo.baz.some_function')])
+                                  'foo.baz.some_function', 'foo.baz'))
 
     def test_implicit(self):
-        self.run_test('implicit', [
+        self.run_test(
+            'implicit',
             slicker.the_suggestor('foo.bar.baz.some_function',
-                                  'quux.new_name'),
-        ])
+                                  'quux.new_name', 'quux'))
 
     def test_double_implicit(self):
-        self.run_test('double_implicit', [
+        self.run_test(
+            'double_implicit',
             slicker.the_suggestor('foo.bar.baz.some_function',
-                                  'quux.new_name'),
-        ])
+                                  'quux.new_name', 'quux'))
 
     def test_slicker(self):
         """Test on (a perhaps out of date version of) slicker itself.
@@ -312,41 +323,43 @@ class FullFileTest(unittest.TestCase):
         It doesn't do anything super fancy, but it's a decent-sized file at
         least.
         """
-        self.run_test('slicker', [
-            slicker.the_suggestor('codemod.%s' % name,
-                                  'codemod_fork.%s' % name,
-                                  use_alias='the_other_codemod')
-            for name in ['Query', 'Patch', 'path_filter', 'regex_suggestor']])
+        self.run_test(
+            'slicker',
+            slicker.the_suggestor('codemod', 'codemod_fork', 'codemod_fork',
+                                  use_alias='the_other_codemod'))
 
     def test_linebreaks(self):
-        self.run_test('linebreaks', [
+        self.run_test(
+            'linebreaks',
             slicker.the_suggestor('foo.bar.baz.some_function',
-                                  'quux.new_name'),
-        ])
+                                  'quux.new_name', 'quux'))
 
     def test_conflict(self):
-        self.run_test('conflict', [
+        self.run_test(
+            'conflict',
             slicker.the_suggestor('foo.bar.interesting_function',
-                                  'bar.interesting_function',
-                                  use_alias='foo'),
-        ])
+                                  'bar.interesting_function', 'bar',
+                                  use_alias='foo'))
 
     def test_conflict_2(self):
-        self.run_test('conflict_2', [
+        self.run_test(
+            'conflict_2',
             slicker.the_suggestor('bar.interesting_function',
-                                  'foo.bar.interesting_function')
-        ])
+                                  'foo.bar.interesting_function', 'foo.bar'))
 
     def test_unused(self):
-        self.run_test('unused', [
+        self.run_test(
+            'unused',
             slicker.the_suggestor('foo.bar.some_function',
-                                  'quux.some_function')])
+                                  'quux.some_function', 'quux'))
 
     def test_many_imports(self):
-        self.run_test('many_imports', [
-            slicker.the_suggestor('foo.quux.replaceme', 'baz.replaced')])
+        self.run_test(
+            'many_imports',
+            slicker.the_suggestor('foo.quux.replaceme', 'baz.replaced', 'baz'))
 
     def test_late_import(self):
-        self.run_test('late_import', [
+        self.run_test(
+            'late_import',
             slicker.the_suggestor('foo.bar.some_function',
-                                  'quux.some_function')])
+                                  'quux.some_function', 'quux'))

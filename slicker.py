@@ -6,6 +6,7 @@ import difflib
 import os
 import re
 import sys
+import textwrap
 
 import codemod
 
@@ -34,14 +35,14 @@ class FakeOptions(object):
     safe_headers = True
 
 
-# imported: the module we actually imported.
+# imported: the module or symbol we actually imported.
 # imported_alias: the alias under which we imported it.
-# module_alias: the alias of the module we were looking for.
+# name_alias: the alias of the module or symbol we were looking for.
 # So if we searched for 'foo.bar.baz' and found 'from foo import bar', we'd
 # represent that as Import('foo.bar', 'bar', 'bar.baz').  See test cases for
 # more examples.
 Import = collections.namedtuple(
-    'Import', ['imported', 'imported_alias', 'module_alias'])
+    'Import', ['imported', 'imported_alias', 'name_alias'])
 
 
 def _compute_all_imports(lines):
@@ -71,25 +72,26 @@ def _compute_all_imports(lines):
     return imports
 
 
-def _determine_imports(module, lines):
-    """Returns info about the names by which the module goes in this file.
+def _determine_imports(symbol, lines):
+    """Returns info about the names by which the symbol goes in this file.
 
     Returns a set of Import namedtuples.
     """
     imports = set()
-    module_parts = module.split('.')
+    symbol_parts = symbol.split('.')
     for name, alias in _compute_all_imports(lines):
         imported_parts = name.split('.')
         if alias == name:
-            if imported_parts[0] == module_parts[0]:
-                imports.add(Import(name, name, module))
+            if imported_parts[0] == symbol_parts[0]:
+                imports.add(Import(name, name, symbol))
         else:
             nparts = len(imported_parts)
-            # If we imported the module, or a less-specific prefix.
-            if module_parts[:nparts] == imported_parts:
-                module_alias = '.'.join(
-                    [alias] + module_parts[nparts:])
-                imports.add(Import(name, alias, module_alias))
+            # If we imported the symbol, or a less-specific prefix (e.g. its
+            # module, or a parent of that)
+            if symbol_parts[:nparts] == imported_parts:
+                symbol_alias = '.'.join(
+                    [alias] + symbol_parts[nparts:])
+                imports.add(Import(name, alias, symbol_alias))
     return imports
 
 
@@ -104,7 +106,8 @@ def _dotted_starts_with(string, prefix):
 def _dotted_prefixes(string):
     """All prefixes of string, in the dotted sense.
 
-    That is, all strings p such that _dotted_starts_with(string, p).
+    That is, all strings p such that _dotted_starts_with(string, p), in order
+    from shortest to longest.
     """
     string_parts = string.split('.')
     for i in xrange(len(string_parts)):
@@ -139,18 +142,22 @@ def _names_starting_with(prefix, lines):
             if name and _dotted_starts_with(name, prefix)}
 
 
-def _had_any_references(module, imports, symbol, lines):
+def _had_any_references(name, imports, lines):
     for imp in imports:
-        if imp.imported == module:
-            # An explicit import of the module.
+        if _dotted_starts_with(name, imp.imported):
+            # An explicit import of the name or a prefix (e.g. module)
+            # TODO(benkraft): This is currently too loose, and should only look
+            # for prefixes module <= prefix <= name.
             return True
-        if bool(_names_starting_with(module, lines)):
+        if _names_starting_with(name, lines):
             return True
     return False
 
 
 def _check_import_conflicts(lines, added_name, is_alias):
     """Return any imports that will conflict with ours.
+
+    added_name should be the name of the import, not the symbol.
 
     TODO(benkraft): If that's due to our alias, we could avoid using
     said alias.
@@ -170,20 +177,20 @@ def _check_import_conflicts(lines, added_name, is_alias):
                 if _dotted_starts_with(added_name, alias)}
 
 
-def _imports_to_remove(old_imports, existing_new_imports, new_alias,
+def _imports_to_remove(old_imports, existing_new_imports, new_name,
                        patched_aliases, lines):
     # Decide whether to keep the old import if we changed references to it.
     removable_imports = set()
     maybe_removable_imports = set()
     for imp in old_imports:
-        if imp.module_alias in existing_new_imports:
+        if imp.name_alias in existing_new_imports:
             # This is the existing new import!  Don't touch it.
             continue
-        elif new_alias == imp.module_alias:
+        elif new_name == imp.name_alias:
             # If one of the old imports is for the same alias, it had
             # better be removable!  (We've already checked for conflicts.)
             removable_imports.add(imp)
-        elif imp.module_alias in patched_aliases:
+        elif imp.name_alias in patched_aliases:
             # Anything starting with the relevant prefix.
             relevant_names = _names_starting_with(
                 imp.imported_alias.split('.')[0], lines)
@@ -193,7 +200,7 @@ def _imports_to_remove(old_imports, existing_new_imports, new_alias,
             handled_names = {
                 name for name in relevant_names
                 if any(_dotted_starts_with(name, prefix)
-                       for prefix in _dotted_prefixes(new_alias))}
+                       for prefix in _dotted_prefixes(new_name))}
 
             # If we explicitly reference the old module via this alias,
             # keep the import.
@@ -222,25 +229,24 @@ def _imports_to_remove(old_imports, existing_new_imports, new_alias,
     return removable_imports, maybe_removable_imports
 
 
-def the_suggestor(old_name, new_name, use_alias=None):
+def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
     def suggestor(lines):
         # PART THE FIRST:
         #    Set things up, do some simple checks, decide whether to operate.
 
         # TODO(benkraft): This is super ginormous by now, break it up.
-        old_module, old_symbol = old_name.rsplit('.', 1)
-        new_module, new_symbol = new_name.rsplit('.', 1)
+        assert _dotted_starts_with(new_name, name_to_import), (
+            "%s isn't a valid name to import -- not a prefix of %s" % (
+                name_to_import, new_name))
 
-        # TODO(benkraft): this isn't quite right if they are importing a
-        # symbol, rather than a module.
-        old_imports = _determine_imports(old_module, lines)
+        old_imports = _determine_imports(old_name, lines)
         # Choose the alias to replace with.
         # TODO(benkraft): this might not be totally safe if the existing
         # import isn't toplevel, but probably it will be.
         existing_new_imports = {
-            imp.module_alias for imp
-            in _determine_imports(new_module, lines)
-            if imp.imported == new_module}
+            imp.name_alias for imp
+            in _determine_imports(new_name, lines)
+            if name_to_import == imp.imported}
 
         # If we didn't import the module at all, nothing to do.
         if not old_imports:
@@ -248,21 +254,27 @@ def the_suggestor(old_name, new_name, use_alias=None):
 
         # Or if we didn't reference it, and didn't explicitly import it.
         # TODO(benkraft): We should still look for mocks and such here.
-        if not _had_any_references(old_module, old_imports, old_symbol, lines):
+        if not _had_any_references(old_name, old_imports, lines):
             return
 
-        old_aliases = {imp.module_alias for imp in old_imports}
+        old_aliases = {imp.name_alias for imp in old_imports}
 
         # If for some reason there are multiple existing aliases
         # (unlikely), choose the shortest one, to save us line-wrapping.
         # Prefer an existing explicit import to the caller-provided alias.
         if existing_new_imports:
-            final_new_module = max(existing_new_imports, key=len)
+            final_new_name = max(existing_new_imports, key=len)
+        elif use_alias and name_to_import == new_name:
+            final_new_name = use_alias
+        elif use_alias:
+            final_new_name = '%s.%s' % (
+                use_alias, new_name[len(name_to_import) + 1:])
         else:
-            final_new_module = use_alias or new_module
+            final_new_name = new_name
 
+        if not existing_new_imports:
             dupe_imports = _check_import_conflicts(
-                lines, final_new_module, bool(use_alias))
+                lines, use_alias or name_to_import, bool(use_alias))
             if dupe_imports:
                 yield codemod.Patch(
                     0, 0,
@@ -272,19 +284,24 @@ def the_suggestor(old_name, new_name, use_alias=None):
                     ["# Not touching this file.\n"])
                 return
 
-        final_new_name = '%s.%s' % (final_new_module, new_symbol)
-
         # PART THE SECOND:
         #    Patch references to the symbol inline -- everything but imports.
 
         patched_aliases = set()
         # If any alias changed, we need to fix up references.  (We'll fix
         # up imports either way at this point.)
-        for imp in old_aliases - {final_new_module}:
-            old_final_re = _re_for_name('%s.%s' % (imp, old_symbol))
+        for imp in old_aliases - {final_new_name}:
+            old_final_re = _re_for_name(imp)
             base_suggestor = codemod.multiline_regex_suggestor(
                 old_final_re, final_new_name)
             for patch in base_suggestor(lines):
+                # HACK: we don't want to fix up imports here; we'll fix them up
+                # later.
+                if _determine_imports(old_name, textwrap.dedent(
+                        ''.join(lines[
+                            patch.start_line_number:patch.end_line_number]))
+                                      .splitlines(True)):
+                    continue
                 if patch.new_lines != lines[
                         patch.start_line_number:patch.end_line_number]:
                     patched_aliases.add(imp)
@@ -293,17 +310,14 @@ def the_suggestor(old_name, new_name, use_alias=None):
         # PART THE THIRD:
         #    Add/remove imports, if necessary.
 
-        if old_module == new_module:
-            return
-
         # Nor if we didn't fix up references and would have had to.
         # TODO(benkraft): I think we do extra work here if we don't change the
         # alias but also don't have any references.
-        if not patched_aliases and final_new_module not in old_aliases:
+        if not patched_aliases and final_new_name not in old_aliases:
             return
 
         removable_imports, maybe_removable_imports = _imports_to_remove(
-            old_imports, existing_new_imports, final_new_module,
+            old_imports, existing_new_imports, final_new_name,
             patched_aliases, lines)
 
         if (existing_new_imports and not removable_imports and
@@ -312,7 +326,11 @@ def the_suggestor(old_name, new_name, use_alias=None):
             return
 
         had_explicit_import = any(
-            imp.imported == old_module for imp in old_imports)
+            # TODO(benkraft): As in _had_any_references, this is too weak -- we
+            # should only call an import explicit if it is of the symbol's
+            # module.
+            _dotted_starts_with(old_name, imp.imported)
+            for imp in old_imports)
         added_on_lines = set()
         for i, line in enumerate(lines):
             # Parse the line on its own to see if it's an import.  This is
@@ -321,7 +339,7 @@ def the_suggestor(old_name, new_name, use_alias=None):
             # instead of having to guess.  It's hard because they could change.
             # TODO(benkraft): This doesn't handle multiline imports quite
             # correctly.
-            maybe_imports = _determine_imports(old_module, [line.lstrip()])
+            maybe_imports = _determine_imports(old_name, [line.lstrip()])
             removed_import = False
             if maybe_imports:
                 # Consider whether to remove the import.
@@ -334,15 +352,15 @@ def the_suggestor(old_name, new_name, use_alias=None):
                     yield codemod.Patch(i, i+1, [])
                 elif maybe_imports.intersection(removable_imports):
                     yield codemod.Patch(i, i+1, [
-                        "%s  # STOPSHIP: I don't know how to edit this "
+                        "%s  # STOP" "SHIP: I don't know how to edit this "
                         "import.\n" % line.rstrip()])
                 elif (maybe_imports.intersection(maybe_removable_imports) and
                       # HACK: sometimes when lines changes under us we may try
                       # to add the comment twice.
                       "may be used implicitly." not in line):
                     yield codemod.Patch(i, i+1, [
-                        "%s  # STOPSHIP: This import may be used implicitly.\n"
-                        % line.rstrip()])
+                        "%s  # STOP" "SHIP: This import may be used "
+                        "implicitly.\n" % line.rstrip()])
 
                 # HACK: if we added an import on the previous line, don't add
                 # one here -- there's no way we need it.  This mitigates the
@@ -364,7 +382,9 @@ def the_suggestor(old_name, new_name, use_alias=None):
                 # the late import.  To handle this case, we'll need to do much
                 # more careful tracing of which imports exist in which scopes.
                 is_explicit = any(
-                    imp.imported == old_module for imp in maybe_imports)
+                    # TODO(benkraft): As above, this check is too weak.
+                    _dotted_starts_with(old_name, imp.imported)
+                    for imp in maybe_imports)
                 # HACK: if we are processing a line that looks identical to the
                 # immediately previous one, we don't add anything for it -- we
                 # may just be seeing the same line again, because we added a
@@ -374,19 +394,19 @@ def the_suggestor(old_name, new_name, use_alias=None):
                 # notice what's going on and bail.
                 if not existing_new_imports and (
                         is_explicit or not had_explicit_import):
-                    if '.' in new_module and use_alias:
-                        base, suffix = new_module.rsplit('.', 1)
+                    if '.' in name_to_import and use_alias:
+                        base, suffix = name_to_import.rsplit('.', 1)
                         if use_alias == suffix:
                             import_stmt = 'from %s import %s' % (base, suffix)
                         else:
                             import_stmt = 'import %s as %s' % (
-                                new_module, use_alias)
+                                name_to_import, use_alias)
                     else:
-                        if use_alias and use_alias != new_module:
+                        if use_alias and use_alias != name_to_import:
                             import_stmt = 'import %s as %s' % (
-                                new_module, use_alias)
+                                name_to_import, use_alias)
                         else:
-                            import_stmt = 'import %s' % new_module
+                            import_stmt = 'import %s' % name_to_import
 
                     # We keep the same indentation-level.
                     indent = _LEADING_WHITESPACE_RE.search(line).group(1)
@@ -401,7 +421,7 @@ def the_suggestor(old_name, new_name, use_alias=None):
                     if not is_explicit:
                         # If we are adding at implicit imports, only do so for
                         # the first one.
-                        existing_new_imports.add(new_module)
+                        existing_new_imports.add(name_to_import)
 
         # PART THE FOURTH:
         #    Resort imports, if necessary.
@@ -448,13 +468,25 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('old_name')
     parser.add_argument('new_name')
+    parser.add_argument('-m', '--module', action='store_true',
+                        help=('Treat moved name as a module, rather than a '
+                              'symbol.'))
     # TODO(benkraft): We don't handle mocks right when there is an alias.
     parser.add_argument('-a', '--alias', metavar='ALIAS',
-                        help='Alias to use when adding new import lines.')
+                        help=('Alias to use when adding new import lines.'
+                              'If this has a dot (e.g. it is a symbol, not a '
+                              'module), all parts except the first must match '
+                              'the real name.'))
     parsed_args = parser.parse_args()
     path_filter = codemod.path_filter(['py'], EXCLUDE_PATHS)
+    # TODO(benkraft): Allow specifying explicitly what to import, so we can
+    # import a symbol (although KA never wants to do that).
+    if parsed_args.module:
+        name_to_import = parsed_args.new_name
+    else:
+        name_to_import, _ = parsed_args.new_name.rsplit('.', 1)
     suggestor = the_suggestor(parsed_args.old_name, parsed_args.new_name,
-                              use_alias=parsed_args.alias)
+                              name_to_import, use_alias=parsed_args.alias)
     query = codemod.Query(suggestor, path_filter=path_filter)
     query.run_interactive()
 
