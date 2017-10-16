@@ -170,7 +170,7 @@ class Frontend(object):
 
     def run_suggestor(self, suggestor,
                       path_filter=default_path_filter(), root='.'):
-        for path in self._resolve_paths(path_filter, root):
+        for path in self.resolve_paths(path_filter, root):
             # Ensure the entire suggestor runs before we start patching.
             try:
                 vals = list(suggestor(path, self.read_file(path)))
@@ -223,7 +223,7 @@ class TestFrontend(Frontend):
         self.warnings = ()
         self.error = None
 
-    def _resolve_paths(self, path_filter, root):
+    def resolve_paths(self, path_filter, root):
         return [self._FAKE_FILENAME]
 
     def handle_patches(self, filename, patches):
