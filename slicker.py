@@ -290,10 +290,72 @@ def _get_import_area(imp, tokens):
     return (prev_tok.endpos if prev_tok else 0, last_tok.endpos)
 
 
+def _replace_in_string(str_tokens, regex, replacement, body):
+    str_tokens = [tok for tok in str_tokens if tok.type == tokenize.STRING]
+    tokens_less_delims = []
+    delims = []
+    for token in str_tokens:
+        if token.string.startswith('"""') or token.string.startswith("'''"):
+            delims.append(token.string[:3])
+            tokens_less_delims.append(token.string[3:-3])
+        else:
+            delims.append(token.string[:1])
+            tokens_less_delims.append(token.string[1:-1])
+    # Note that this still may have escapes in it; we just assume we can not
+    # care (e.g. that identifiers are all ASCII)
+    joined_unparsed_str = ''.join(tokens_less_delims)
+    for match in regex.finditer(joined_unparsed_str):
+        rel_start, rel_end = match.span()
+        # Sets up start_index to the index of the token in which the first
+        # character of the match is found, and rel_start to the character-index
+        # relative to that token (not counting its delimters), and the same for
+        # end_index/rel_end.
+        # Note 0 <= rel_start < len(tokens_less_delims[start_index])
+        # and 0 < rel_end <= len(tokens_less_delims[end_index]).
+        # TODO(benkraft): DRY a bit.
+        for i, tok in enumerate(tokens_less_delims):
+            if rel_start < len(tok):
+                start_index = i
+                break
+            else:
+                rel_start -= len(tok)
+        for i, tok in enumerate(tokens_less_delims):
+            if rel_end <= len(tok):
+                end_index = i
+                break
+            else:
+                rel_end -= len(tok)
+
+        # Figure out what changes to actually make, based on the tokens we
+        # have.
+        start = (str_tokens[start_index].startpos + rel_start +
+                 len(delims[start_index]))
+        end = (str_tokens[end_index].startpos + rel_end +
+               len(delims[end_index]))
+        if delims[start_index] == delims[end_index]:
+            # We merge the relevant tokens -- user can rewrap lines if needed.
+            pass
+        elif rel_start == 0:
+            # We can just get rid of the start token, and merge into the end.
+            start = str_tokens[start_index].startpos
+            replacement = delims[end_index] + replacement
+        elif rel_end == len(tokens_less_delims[end_index]):
+            # We can just get rid of the end token, and merge into the start.
+            end = str_tokens[end_index].endpos
+            replacement = replacement + delims[start_index]
+        else:
+            # We have to keep both tokens around, fixing delimiters and adding
+            # space in between; likely the user will rewrap lines anyway.
+            replacement = (delims[start_index] + ' ' + delims[end_index] +
+                           replacement)
+        yield khodemod.Patch(body[start:end], replacement, start, end)
+
+
 def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
     def suggestor(filename, body):
         # TODO(benkraft): cache the AST.
-        tokens = asttokens.ASTTokens(body, parse=True)
+        root = ast.parse(body)
+        tokens = asttokens.ASTTokens(body, tree=root)
 
         # PART THE FIRST:
         #    Set things up, do some simple checks, decide whether to operate.
@@ -311,11 +373,6 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
             imp.alias for imp
             in _determine_imports(new_name, body)
             if name_to_import == imp.imp.name}
-
-        # If we didn't import the module at all, nothing to do.
-        # TODO(benkraft): We should still look for mocks and such here.
-        if not old_imports:
-            return
 
         old_aliases = {imp.alias for imp in old_imports}
 
@@ -354,6 +411,41 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
                     yield khodemod.Patch(
                         body[start:end], final_new_name + name[len(imp):],
                         start, end)
+
+        # Fix up references in strings and comments.  We look for both the
+        # fully-qualified name and any aliases in use in this file.  We always
+        # replace fully-qualified references with fully-qualified references;
+        # references to aliases get replaced with whatever we're using for the
+        # rest of the file.
+
+        # Strings
+        for node in ast.walk(root):
+            if isinstance(node, ast.Str):
+                start, end = tokens.get_text_range(node)
+                str_tokens = list(tokens.get_tokens(node, include_extra=True))
+                for imp in (old_aliases - {final_new_name}) | {old_name}:
+                    old_name_re = _re_for_name(imp)
+                    if old_name_re.search(node.s):
+                        replacement = (
+                            new_name if imp == old_name else final_new_name)
+                        for patch in _replace_in_string(
+                                str_tokens, old_name_re, replacement, body):
+                            yield patch
+
+        # Comments
+        for token in tokens.tokens:
+            if token.type == tokenize.COMMENT:
+                for imp in (old_aliases - {final_new_name}) | {old_name}:
+                    old_name_re = _re_for_name(imp)
+                    replacement = (
+                        new_name if imp == old_name else final_new_name)
+                    # TODO(benkraft): Handle names broken across multiple lines
+                    # of comments.
+                    for match in old_name_re.finditer(token.string):
+                        yield khodemod.Patch(
+                            match.group(0), replacement,
+                            match.start() + token.startpos,
+                            match.end() + token.startpos)
 
         # PART THE THIRD:
         #    Add/remove imports, if necessary.
@@ -480,7 +572,6 @@ def main():
     parser.add_argument('-m', '--module', action='store_true',
                         help=('Treat moved name as a module, rather than a '
                               'symbol.'))
-    # TODO(benkraft): We don't handle mocks right when there is an alias.
     parser.add_argument('-a', '--alias', metavar='ALIAS',
                         help=('Alias to use when adding new import lines.'
                               'If this has a dot (e.g. it is a symbol, not a '

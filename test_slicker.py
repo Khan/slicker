@@ -372,3 +372,16 @@ class FullFileTest(unittest.TestCase):
             'late_import',
             slicker.the_suggestor('foo.bar.some_function',
                                   'quux.some_function', 'quux'))
+
+    def test_mock(self):
+        self.run_test(
+            'mock',
+            slicker.the_suggestor('foo.bar.some_function',
+                                  'quux.some_function', 'quux'))
+
+    def test_comments(self):
+        self.run_test(
+            'comments',
+            slicker.the_suggestor('foo.bar.some_function',
+                                  'quux.mod.some_function', 'quux.mod',
+                                  use_alias='al'))
