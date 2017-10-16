@@ -193,10 +193,12 @@ class SilentFrontend(Frontend):
         body = self.read_file(filename)
         # We operate in reverse order to avoid having to keep track of changing
         # offsets.
+        new_body = body
         for patch in reversed(patches):
-            body = patch.apply_to(body)
-        with open(filename, 'w') as f:
-            f.write(body)
+            new_body = patch.apply_to(body)
+        if body != new_body:
+            with open(filename, 'w') as f:
+                f.write(new_body)
 
     def handle_warnings(self, filename, warnings):
         body = self.read_file(filename)
