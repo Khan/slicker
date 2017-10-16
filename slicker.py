@@ -417,6 +417,8 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
         # replace fully-qualified references with fully-qualified references;
         # references to aliases get replaced with whatever we're using for the
         # rest of the file.
+        # TODO(benkraft): If we are moving a file, also fix up references to
+        # the filename.
 
         # Strings
         for node in ast.walk(root):

@@ -191,13 +191,13 @@ class AcceptingFrontend(Frontend):
 
     def handle_patches(self, filename, patches):
         if self.verbose:
-            print "INFO:Applying %s patches to %s" % (filename, len(patches))
+            print "INFO:Applying %s patches to %s" % (len(patches), filename)
         body = self.read_file(filename)
         # We operate in reverse order to avoid having to keep track of changing
         # offsets.
         new_body = body
         for patch in reversed(patches):
-            new_body = patch.apply_to(body)
+            new_body = patch.apply_to(new_body)
         if body != new_body:
             with open(filename, 'w') as f:
                 f.write(new_body)
