@@ -84,7 +84,7 @@ def dotfiles_path_filter():
 
 def exclude_paths_filter(exclude_paths):
     return lambda path: not any(part in exclude_paths
-                                for part in os.path.split(path))
+                                for part in path.split(os.path.sep))
 
 
 def and_filters(filters):
