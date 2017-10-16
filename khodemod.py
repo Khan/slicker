@@ -83,8 +83,8 @@ def dotfiles_path_filter():
 
 
 def exclude_paths_filter(exclude_paths):
-    return lambda path: any(part in exclude_paths
-                            for part in os.path.split(path))
+    return lambda path: not any(part in exclude_paths
+                                for part in os.path.split(path))
 
 
 def and_filters(filters):
@@ -159,12 +159,9 @@ class Frontend(object):
 
     def resolve_paths(self, path_filter, root='.'):
         for dirpath, dirnames, filenames in os.walk(root):
-            relpath = os.path.relpath(dirpath, root)
-            for i, name in enumerate(dirnames):
-                if not path_filter(os.path.join(relpath, name)):
-                    del dirnames[i]
+            # TODO(benkraft): Avoid traversing excluded directories.
             for name in filenames:
-                relname = os.path.join(relpath, name)
+                relname = os.path.relpath(os.path.join(dirpath, name), root)
                 if path_filter(relname):
                     yield relname
 
