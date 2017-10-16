@@ -577,6 +577,8 @@ def main():
                               'If this has a dot (e.g. it is a symbol, not a '
                               'module), all parts except the first must match '
                               'the real name.'))
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help="Print some information about what we're doing.")
     parsed_args = parser.parse_args()
     # TODO(benkraft): Allow specifying what paths to operate on.
     # TODO(benkraft): Allow specifying explicitly what to import, so we can
@@ -588,8 +590,9 @@ def main():
     suggestor = the_suggestor(parsed_args.old_name, parsed_args.new_name,
                               name_to_import, use_alias=parsed_args.alias)
     # TODO(benkraft): Support other khodemod frontends.
-    khodemod.SilentFrontend().run_suggestor(suggestor)
-    khodemod.SilentFrontend().run_suggestor(import_sort_suggestor)
+    frontend = khodemod.AcceptingFrontend(verbose=parsed_args.verbose)
+    frontend.run_suggestor(suggestor)
+    frontend.run_suggestor(import_sort_suggestor)
 
 
 if __name__ == '__main__':

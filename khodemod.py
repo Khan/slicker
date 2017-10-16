@@ -184,9 +184,14 @@ class Frontend(object):
                 self.handle_error(path, e)
 
 
-class SilentFrontend(Frontend):
-    """A frontend where we silently apply all patches if all goes well."""
+class AcceptingFrontend(Frontend):
+    """A frontend where we apply all patches without question."""
+    def __init__(self, verbose=False):
+        self.verbose = verbose
+
     def handle_patches(self, filename, patches):
+        if self.verbose:
+            print "INFO:Applying %s patches to %s" % (filename, len(patches))
         body = self.read_file(filename)
         # We operate in reverse order to avoid having to keep track of changing
         # offsets.
