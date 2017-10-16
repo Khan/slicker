@@ -6,9 +6,11 @@ import difflib
 import os
 import re
 import sys
-import textwrap
+import tokenize
 
-import codemod
+import asttokens
+
+import khodemod
 
 # After importing everything else, but before importing fix_python_imports, we
 # want to add cwd to the python path, so that fix_python_imports can find what
@@ -16,14 +18,6 @@ import codemod
 # TODO(benkraft): refactor fix_python_imports so this is easier.
 sys.path.insert(0, os.getcwd())
 import fix_python_imports
-
-
-# TODO(benkraft): configurable
-EXCLUDE_PATHS = ['third_party', 'genfiles']
-
-
-_LEADING_WHITESPACE_RE = re.compile('^(\s*)(\S|$)')
-_FINAL_COMMENT_RE = re.compile('(\s*#.*)?$')
 
 
 def _re_for_name(name):
@@ -35,24 +29,37 @@ class FakeOptions(object):
     safe_headers = True
 
 
-# imported: the module or symbol we actually imported.
-# imported_alias: the alias under which we imported it.
-# name_alias: the alias of the module or symbol we were looking for.
-# So if we searched for 'foo.bar.baz' and found 'from foo import bar', we'd
-# represent that as Import('foo.bar', 'bar', 'bar.baz').  See test cases for
-# more examples.
+# Import: an import in the file (or a part thereof, if commas are used).
+#   name: the fully-qualified symbol we imported.
+#   alias: the name under which we imported it.
+#   start, end: character-indexes delimiting the import
+#   node: the AST node for the import.
+# So for example, 'from foo import bar' would result in an Import with
+# name='foo.bar' and alias='bar'.  If it were at the start of the file it would
+# have start=0, end=19.  See test cases for more examples.
 Import = collections.namedtuple(
-    'Import', ['imported', 'imported_alias', 'name_alias'])
+    'Import', ['name', 'alias', 'start', 'end', 'node'])
+
+# SymbolImport: an import, plus the context for a symbol it brings.
+#   imp: the Import that makes this symbol available
+#   symbol: the symbol we are looking for
+#   alias: the name under which the symbol is made available.
+# So in the above example, if we were searching for foo.bar.some_function(),
+# we'd get a SymbolImport with symbol='foo.bar.some_function' and
+# alias='bar.some_function'.  See test cases for more examples.
+SymbolImport = collections.namedtuple(
+    'SymbolImport', ['imp', 'symbol', 'alias'])
 
 
-def _compute_all_imports(lines):
+def _compute_all_imports(body):
     """Returns info about the imports in this file.
 
-    Returns a set of pairs (name, imported as).
+    Returns a set of Import objects.
     """
     try:
         # TODO(benkraft): cache the AST.
-        root = ast.parse(''.join(lines))
+        root = ast.parse(body)
+        tokens = asttokens.ASTTokens(body, tree=root)
     except SyntaxError:
         return set()
     imports = set()
@@ -63,35 +70,39 @@ def _compute_all_imports(lines):
                 # unfortunately tricky for us to get the filename we're working
                 # on, so we just ignore them and cross our fingers for now.
                 continue
+            start, end = tokens.get_text_range(node)
             for alias in node.names:
                 if isinstance(node, ast.Import):
-                    imports.add((alias.name, alias.asname or alias.name))
+                    imports.add(
+                        Import(alias.name, alias.asname or alias.name,
+                               start, end, node))
                 else:
-                    imports.add(('%s.%s' % (node.module, alias.name),
-                                 alias.asname or alias.name))
+                    imports.add(
+                        Import('%s.%s' % (node.module, alias.name),
+                               alias.asname or alias.name, start, end, node))
     return imports
 
 
-def _determine_imports(symbol, lines):
+def _determine_imports(symbol, body):
     """Returns info about the names by which the symbol goes in this file.
 
-    Returns a set of Import namedtuples.
+    Returns a set of SymbolImport namedtuples.
     """
     imports = set()
     symbol_parts = symbol.split('.')
-    for name, alias in _compute_all_imports(lines):
-        imported_parts = name.split('.')
-        if alias == name:
+    for imp in _compute_all_imports(body):
+        imported_parts = imp.name.split('.')
+        if imp.alias == imp.name:
             if imported_parts[0] == symbol_parts[0]:
-                imports.add(Import(name, name, symbol))
+                imports.add(SymbolImport(imp, symbol, symbol))
         else:
             nparts = len(imported_parts)
             # If we imported the symbol, or a less-specific prefix (e.g. its
             # module, or a parent of that)
             if symbol_parts[:nparts] == imported_parts:
                 symbol_alias = '.'.join(
-                    [alias] + symbol_parts[nparts:])
-                imports.add(Import(name, alias, symbol_alias))
+                    [imp.alias] + symbol_parts[nparts:])
+                imports.add(SymbolImport(imp, symbol, symbol_alias))
     return imports
 
 
@@ -128,100 +139,121 @@ def _name_for_node(node):
             return '%s.%s' % (value, node.attr)
 
 
-def _names_starting_with(prefix, lines):
+def _all_names(root):
+    """Returns all names in the file.
+
+    Does not include imports or string references or anything else funky like
+    that, and only returns the "biggest" possible name -- if you reference
+    a.b.c we won't include a.b.
+    """
+    name = _name_for_node(root)
+    if name:
+        return {name}
+    else:
+        return {name
+                for node in ast.iter_child_nodes(root)
+                for name in _all_names(node)}
+
+
+def _names_starting_with(prefix, body):
     """Returns all dotted names in the file beginning with 'prefix'.
 
     Does not include imports or string references or anything else funky like
-    that.  Includes prefixes, so if you do a.b.c and ask for things beginning
-    with a, we'll return {'a', 'a.b', 'a.b.c'}.  "Beginning with prefix" in the
-    dotted sense (see _dotted_starts_with).
+    that.  "Beginning with prefix" in the dotted sense (see
+    _dotted_starts_with).
     """
-    root = ast.parse(''.join(lines))
-    all_names = (_name_for_node(node) for node in ast.walk(root))
-    return {name for name in all_names
-            if name and _dotted_starts_with(name, prefix)}
+    root = ast.parse(body)
+    return {name for name in _all_names(root)
+            if _dotted_starts_with(name, prefix)}
 
 
-def _had_any_references(name, imports, lines):
+def _had_any_references(name, imports, body):
     for imp in imports:
-        if _dotted_starts_with(name, imp.imported):
+        if _dotted_starts_with(name, imp.imp.name):
             # An explicit import of the name or a prefix (e.g. module)
             # TODO(benkraft): This is currently too loose, and should only look
             # for prefixes module <= prefix <= name.
             return True
-        if _names_starting_with(name, lines):
+        if _names_starting_with(name, body):
             return True
     return False
 
 
-def _check_import_conflicts(lines, added_name, is_alias):
+def _check_import_conflicts(body, added_name, is_alias):
     """Return any imports that will conflict with ours.
 
     added_name should be the name of the import, not the symbol.
+    Returns a list of import objects.
 
     TODO(benkraft): If that's due to our alias, we could avoid using
     said alias.
     TODO(benkraft): Also check if there are variable-names that
     collide.
     """
-    imports = _compute_all_imports(lines)
+    imports = _compute_all_imports(body)
     if is_alias:
         # If we are importing with an alias, we're looking for existing
         # imports with whose prefix we collide.
-        return {name for name, alias in imports
-                if _dotted_starts_with(alias, added_name)}
+        return {imp for imp in imports
+                if _dotted_starts_with(imp.alias, added_name)}
     else:
         # If we aren't importing with an alias, we're looking for
         # existing imports who are a prefix of us.
-        return {name for name, alias in imports
-                if _dotted_starts_with(added_name, alias)}
+        return {imp for imp in imports
+                if _dotted_starts_with(added_name, imp.alias)}
 
 
-def _imports_to_remove(old_imports, existing_new_imports, new_name,
-                       patched_aliases, lines):
+def _imports_to_remove(old_imports, new_name, patched_aliases, body):
+    """Decide what imports we can remove.
+
+    Arguments:
+        old_imports: set of SymbolImports
+        new_name: the name to which we moved the symbol
+        patched_aliases: the set of SymbolImports whose references we
+        potentially patched
+        body: the file text
+
+    returns: (set of imports we can remove,
+              set of imports that may be used implicitly)
+    """
     # Decide whether to keep the old import if we changed references to it.
     removable_imports = set()
     maybe_removable_imports = set()
+    definitely_kept_imports = set()
     for imp in old_imports:
-        if imp.name_alias in existing_new_imports:
-            # This is the existing new import!  Don't touch it.
-            continue
-        elif new_name == imp.name_alias:
+        if new_name == imp.alias:
             # If one of the old imports is for the same alias, it had
             # better be removable!  (We've already checked for conflicts.)
-            removable_imports.add(imp)
-        elif imp.name_alias in patched_aliases:
+            removable_imports.add(imp.imp)
+        elif imp.alias in patched_aliases:
             # Anything starting with the relevant prefix.
             relevant_names = _names_starting_with(
-                imp.imported_alias.split('.')[0], lines)
-            explicit_names = {
-                name for name in relevant_names
-                if _dotted_starts_with(name, imp.imported_alias)}
+                imp.imp.alias.split('.')[0], body)
             handled_names = {
                 name for name in relevant_names
-                if any(_dotted_starts_with(name, prefix)
-                       for prefix in _dotted_prefixes(new_name))}
+                if _dotted_starts_with(name, imp.alias)}
+            explicit_names = {
+                name for name in relevant_names
+                if _dotted_starts_with(name, imp.imp.alias)}
 
-            # If we explicitly reference the old module via this alias,
-            # keep the import.
-            if explicit_names:
-                break
-            # If we implicitly reference this import, and the new import
-            # will not take care of it, we need to ask the user what to do.
-            elif relevant_names - explicit_names - handled_names:
-                maybe_removable_imports.add(imp)
+            # If we reference this import, other than for the moved symbol, we
+            # may need to keep it.
+            if explicit_names - handled_names:
+                definitely_kept_imports.add(imp.imp)
+            elif relevant_names - handled_names:
+                maybe_removable_imports.add(imp.imp)
             else:
-                removable_imports.add(imp)
+                removable_imports.add(imp.imp)
+        else:
+            definitely_kept_imports.add(imp.imp)
 
     # Now, if there was an import we were considering removing, and we are
     # keeping a different import that gets us the same things, we can
     # definitely remove the former.
-    definitely_kept_imports = (old_imports - removable_imports -
-                               maybe_removable_imports)
     for maybe_removable_imp in list(maybe_removable_imports):
         for kept_imp in definitely_kept_imports:
-            if (maybe_removable_imp.imported_alias.split('.')[0] ==
-                    kept_imp.imported_alias.split('.')[0]):
+            if (maybe_removable_imp.alias.split('.')[0] ==
+                    kept_imp.alias.split('.')[0]):
                 maybe_removable_imports.remove(maybe_removable_imp)
                 removable_imports.add(maybe_removable_imp)
                 break
@@ -229,8 +261,42 @@ def _imports_to_remove(old_imports, existing_new_imports, new_name,
     return removable_imports, maybe_removable_imports
 
 
+def _get_import_area(imp, tokens):
+    """Return the start/end character offsets of the whole import region.
+
+    We include everything that is part of the same line, as well as its ending
+    newline, (but excluding semicolons), as part of the import region.
+
+    TODO(benkraft): Should we look at preceding full-line comments?  We end up
+    fighting with fix_python_imports if we do.
+    """
+    toks = list(tokens.get_tokens(imp.node, include_extra=True))
+    first_tok = toks[0]
+    last_tok = toks[-1]
+
+    # prev_tok will be the last token before the import area, or None if there
+    # isn't one.
+    prev_tok = next(reversed(
+        [tok for tok in tokens.tokens[:first_tok.index]
+         if tok.string == '\n' or not tok.string.isspace()]), None)
+
+    for tok in tokens.tokens[last_tok.index + 1:]:
+        if tok.type == tokenize.COMMENT:
+            last_tok = tok
+        elif tok.string == '\n':
+            last_tok = tok
+            break
+        else:
+            break
+
+    return (prev_tok.endpos if prev_tok else 0, last_tok.endpos)
+
+
 def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
-    def suggestor(lines):
+    def suggestor(filename, body):
+        # TODO(benkraft): cache the AST.
+        tokens = asttokens.ASTTokens(body, parse=True)
+
         # PART THE FIRST:
         #    Set things up, do some simple checks, decide whether to operate.
 
@@ -239,14 +305,14 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
             "%s isn't a valid name to import -- not a prefix of %s" % (
                 name_to_import, new_name))
 
-        old_imports = _determine_imports(old_name, lines)
+        old_imports = _determine_imports(old_name, body)
         # Choose the alias to replace with.
         # TODO(benkraft): this might not be totally safe if the existing
         # import isn't toplevel, but probably it will be.
         existing_new_imports = {
-            imp.name_alias for imp
-            in _determine_imports(new_name, lines)
-            if name_to_import == imp.imported}
+            imp.alias for imp
+            in _determine_imports(new_name, body)
+            if name_to_import == imp.imp.name}
 
         # If we didn't import the module at all, nothing to do.
         if not old_imports:
@@ -254,10 +320,10 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
 
         # Or if we didn't reference it, and didn't explicitly import it.
         # TODO(benkraft): We should still look for mocks and such here.
-        if not _had_any_references(old_name, old_imports, lines):
+        if not _had_any_references(old_name, old_imports, body):
             return
 
-        old_aliases = {imp.name_alias for imp in old_imports}
+        old_aliases = {imp.alias for imp in old_imports}
 
         # If for some reason there are multiple existing aliases
         # (unlikely), choose the shortest one, to save us line-wrapping.
@@ -274,15 +340,11 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
 
         if not existing_new_imports:
             dupe_imports = _check_import_conflicts(
-                lines, use_alias or name_to_import, bool(use_alias))
+                body, use_alias or name_to_import, bool(use_alias))
             if dupe_imports:
-                yield codemod.Patch(
-                    0, 0,
-                    ["# STOP" "SHIP: Your alias will conflict with the "
-                     "following imports:\n"] +
-                    ["#    %s\n" % imp for imp in dupe_imports] +
-                    ["# Not touching this file.\n"])
-                return
+                raise khodemod.FatalError(
+                    dupe_imports.pop().start,
+                    "Your alias will conflict with imports in this file.")
 
         # PART THE SECOND:
         #    Patch references to the symbol inline -- everything but imports.
@@ -292,18 +354,14 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
         # up imports either way at this point.)
         for imp in old_aliases - {final_new_name}:
             old_final_re = _re_for_name(imp)
-            base_suggestor = codemod.multiline_regex_suggestor(
+            base_suggestor = khodemod.regex_suggestor(
                 old_final_re, final_new_name)
-            for patch in base_suggestor(lines):
-                # HACK: we don't want to fix up imports here; we'll fix them up
-                # later.
-                if _determine_imports(old_name, textwrap.dedent(
-                        ''.join(lines[
-                            patch.start_line_number:patch.end_line_number]))
-                                      .splitlines(True)):
+            for patch in base_suggestor(filename, body):
+                # If this is any import, skip it entirely.
+                if any(imp.start <= patch.end and patch.start <= imp.end
+                       for imp in _compute_all_imports(body)):
                     continue
-                if patch.new_lines != lines[
-                        patch.start_line_number:patch.end_line_number]:
+                if patch.old != patch.new:
                     patched_aliases.add(imp)
                     yield patch
 
@@ -317,152 +375,114 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
             return
 
         removable_imports, maybe_removable_imports = _imports_to_remove(
-            old_imports, existing_new_imports, final_new_name,
-            patched_aliases, lines)
+            old_imports, final_new_name, patched_aliases, body)
 
         if (existing_new_imports and not removable_imports and
                 not maybe_removable_imports):
             # We made changes, but still don't need to fix any imports.
             return
 
-        had_explicit_import = any(
-            # TODO(benkraft): As in _had_any_references, this is too weak -- we
-            # should only call an import explicit if it is of the symbol's
-            # module.
-            _dotted_starts_with(old_name, imp.imported)
-            for imp in old_imports)
-        added_on_lines = set()
-        for i, line in enumerate(lines):
-            # Parse the line on its own to see if it's an import.  This is
-            # kinda fragile.  We have to strip leading indents to make it work.
-            # TODO(benkraft): Track line numbers, and look for the right line
-            # instead of having to guess.  It's hard because they could change.
-            # TODO(benkraft): This doesn't handle multiline imports quite
-            # correctly.
-            maybe_imports = _determine_imports(old_name, [line.lstrip()])
-            removed_import = False
-            if maybe_imports:
-                # Consider whether to remove the import.
-                if ('@UnusedImport' in line or
-                        '@Nolint' in line and 'unused' in line):
-                    # Never remove a deliberately unused import.
-                    pass
-                elif maybe_imports.issubset(removable_imports):
-                    removed_import = True
-                    yield codemod.Patch(i, i+1, [])
-                elif maybe_imports.intersection(removable_imports):
-                    yield codemod.Patch(i, i+1, [
-                        "%s  # STOP" "SHIP: I don't know how to edit this "
-                        "import.\n" % line.rstrip()])
-                elif (maybe_imports.intersection(maybe_removable_imports) and
-                      # HACK: sometimes when lines changes under us we may try
-                      # to add the comment twice.
-                      "may be used implicitly." not in line):
-                    yield codemod.Patch(i, i+1, [
-                        "%s  # STOP" "SHIP: This import may be used "
-                        "implicitly.\n" % line.rstrip()])
+        for imp in maybe_removable_imports:
+            yield khodemod.WarningInfo(
+                imp.start, "This import may be used implicitly.")
+        for imp in removable_imports:
+            toks = list(tokens.get_tokens(imp.node, include_extra=False))
+            next_tok = tokens.next_token(toks[-1], include_extra=True)
+            if next_tok.type == tokenize.COMMENT and (
+                    '@nolint' in next_tok.string.lower() or
+                    '@unusedimport' in next_tok.string.lower()):
+                # Don't touch nolinted imports; they may be there for a reason.
+                yield khodemod.WarningInfo(
+                    imp.start, "Not removing import with @Nolint.")
+            elif ',' in body[imp.start:imp.end]:
+                # TODO(benkraft): How should this consider internal comments?
+                yield khodemod.WarningInfo(
+                    imp.start, "I don't know how to edit this import.")
+            else:
+                start, end = _get_import_area(imp, tokens)
+                yield khodemod.Patch(body[start:end], '', start, end)
 
-                # HACK: if we added an import on the previous line, don't add
-                # one here -- there's no way we need it.  This mitigates the
-                # issue where sometimes we process a line again because we
-                # added a line just before it (and didn't delete it).  It
-                # doesn't totally solve the issue, in the case where the user
-                # did a manual edit, but hopefully in that case they are paying
-                # attention.
-                if i - 1 in added_on_lines:
-                    continue
+        # Consider whether to add an import.
+        if not existing_new_imports:
+            # Decide what the import will say.
+            if '.' in name_to_import and use_alias:
+                base, suffix = name_to_import.rsplit('.', 1)
+                if use_alias == suffix:
+                    import_stmt = 'from %s import %s' % (base, suffix)
+                else:
+                    import_stmt = 'import %s as %s' % (
+                        name_to_import, use_alias)
+            else:
+                if use_alias and use_alias != name_to_import:
+                    import_stmt = 'import %s as %s' % (
+                        name_to_import, use_alias)
+                else:
+                    import_stmt = 'import %s' % name_to_import
 
-                # Consider whether to add an import.
+            # Decide where to add it.
+            explicit_imports = {imp for imp in old_imports
+                                # TODO(benkraft): As in _had_any_references,
+                                # this is too weak -- we should only call an
+                                # import explicit if it is of the symbol's
+                                # module.
+                                if _dotted_starts_with(old_name, imp.imp.name)}
+
+            if explicit_imports:
                 # If there previously existed an explicit import, we add at the
-                # location of each explicit import, and only those.  If not, we
-                # add at the first implicit import only.
+                # location of each explicit import, and only those.
                 # TODO(benkraft): This doesn't work correctly in the case where
                 # there was an implicit toplevel import, and an explicit late
                 # import, and the moved symbol was used outside the scope of
                 # the late import.  To handle this case, we'll need to do much
                 # more careful tracing of which imports exist in which scopes.
-                is_explicit = any(
-                    # TODO(benkraft): As above, this check is too weak.
-                    _dotted_starts_with(old_name, imp.imported)
-                    for imp in maybe_imports)
-                # HACK: if we are processing a line that looks identical to the
-                # immediately previous one, we don't add anything for it -- we
-                # may just be seeing the same line again, because we added a
-                # line in front of it.
-                # TODO(benkraft): If the user has edited the patches to add two
-                # lines, this won't work, but hopefully in that case they will
-                # notice what's going on and bail.
-                if not existing_new_imports and (
-                        is_explicit or not had_explicit_import):
-                    if '.' in name_to_import and use_alias:
-                        base, suffix = name_to_import.rsplit('.', 1)
-                        if use_alias == suffix:
-                            import_stmt = 'from %s import %s' % (base, suffix)
-                        else:
-                            import_stmt = 'import %s as %s' % (
-                                name_to_import, use_alias)
-                    else:
-                        if use_alias and use_alias != name_to_import:
-                            import_stmt = 'import %s as %s' % (
-                                name_to_import, use_alias)
-                        else:
-                            import_stmt = 'import %s' % name_to_import
+                add_at = explicit_imports
+            else:
+                # If not, we add at the first implicit import only.
+                add_at = next(sorted(old_imports,
+                                     key=lambda imp: imp.imp.start))
 
-                    # We keep the same indentation-level.
-                    indent = _LEADING_WHITESPACE_RE.search(line).group(1)
-                    # If we removed an import here, grab its comment.
-                    if removed_import:
-                        comment = _FINAL_COMMENT_RE.search(line).group(0)
-                    else:
-                        comment = ''
-                    yield codemod.Patch(
-                        i, i, ['%s%s%s\n' % (indent, import_stmt, comment)])
-                    added_on_lines.add(i)
-                    if not is_explicit:
-                        # If we are adding at implicit imports, only do so for
-                        # the first one.
-                        existing_new_imports.add(name_to_import)
+            for imp in add_at:
+                # Copy the old import's context.
+                # TODO(benkraft): If the context we copy is a comment, and we
+                # are keeping the old import, maybe don't copy it?
+                start, end = _get_import_area(imp.imp, tokens)
+                text_to_add = ''.join(
+                    [body[start:imp.imp.start],
+                     import_stmt,
+                     body[imp.imp.end:end]])
 
-        # PART THE FOURTH:
-        #    Resort imports, if necessary.
-
-        # TODO(benkraft): merge this with the import-adding, so we just show
-        # one diff to add in the right place, unless there is additional
-        # sorting to do.
-        # Now call out to fix_python_imports to do the import-sorting
-        change_record = fix_python_imports.ChangeRecord('fake_file.py')
-
-        # A modified version of fix_python_imports.GetFixedFile
-        file_line_infos = fix_python_imports.ParseOneFile(
-            ''.join(lines), change_record)
-        fixed_lines = fix_python_imports.FixFileLines(
-            change_record, file_line_infos, FakeOptions())
-
-        if fixed_lines is None:
-            return
-        fixed_lines = ['%s\n' % line for line in fixed_lines
-                       if line is not None]
-        if fixed_lines == lines:
-            return
-
-        # Unfortunately we have to give the diff all at once, and make the user
-        # accept or reject it all, because otherwise the file could change
-        # under us and we won't know how to apply the rest.
-        # TODO(benkraft): something better
-        diffs = difflib.SequenceMatcher(None, lines, fixed_lines).get_opcodes()
-        if diffs[0][0] == 'equal':
-            del diffs[0]
-        if diffs[-1][0] == 'equal':
-            del diffs[-1]
-
-        yield codemod.Patch(diffs[0][1], diffs[-1][2],
-                            fixed_lines[diffs[0][3]:diffs[-1][4]])
+                yield khodemod.Patch('', text_to_add, start, start)
 
     return suggestor
 
 
+def import_sort_suggestor(filename, body):
+    # TODO(benkraft): merge this with the import-adding, so we just show
+    # one diff to add in the right place, unless there is additional
+    # sorting to do.
+    # Now call out to fix_python_imports to do the import-sorting
+    change_record = fix_python_imports.ChangeRecord('fake_file.py')
+
+    # A modified version of fix_python_imports.GetFixedFile
+    file_line_infos = fix_python_imports.ParseOneFile(
+        body, change_record)
+    fixed_lines = fix_python_imports.FixFileLines(
+        change_record, file_line_infos, FakeOptions())
+
+    if fixed_lines is None:
+        return
+    fixed_body = ''.join(['%s\n' % line for line in fixed_lines
+                          if line is not None])
+    if fixed_body == body:
+        return
+
+    diffs = difflib.SequenceMatcher(None, body, fixed_body).get_opcodes()
+    for op, i1, i2, j1, j2 in diffs:
+        if op != 'equal':
+            yield khodemod.Patch(body[i1:i2], fixed_body[j1:j2], i1, i2)
+
+
 def main():
-    # TODO(benkraft): support other codemod args
     # TODO(benkraft): Allow moving multiple symbols (from/to the same modules)
     # at once.
     parser = argparse.ArgumentParser()
@@ -478,7 +498,7 @@ def main():
                               'module), all parts except the first must match '
                               'the real name.'))
     parsed_args = parser.parse_args()
-    path_filter = codemod.path_filter(['py'], EXCLUDE_PATHS)
+    # TODO(benkraft): Allow specifying what paths to operate on.
     # TODO(benkraft): Allow specifying explicitly what to import, so we can
     # import a symbol (although KA never wants to do that).
     if parsed_args.module:
@@ -487,8 +507,9 @@ def main():
         name_to_import, _ = parsed_args.new_name.rsplit('.', 1)
     suggestor = the_suggestor(parsed_args.old_name, parsed_args.new_name,
                               name_to_import, use_alias=parsed_args.alias)
-    query = codemod.Query(suggestor, path_filter=path_filter)
-    query.run_interactive()
+    # TODO(benkraft): Support other khodemod frontends.
+    khodemod.SilentFrontend().run_suggestor(suggestor)
+    khodemod.SilentFrontend().run_suggestor(import_sort_suggestor)
 
 
 if __name__ == '__main__':

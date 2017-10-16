@@ -1,189 +1,202 @@
-import os
+import ast
 import unittest
-import shutil
-import tempfile
 
-import codemod
+import khodemod
 
 import slicker
 
 
 class DetermineImportsTest(unittest.TestCase):
+    def _assert_imports(self, actual, expected):
+        """Assert imports match the given tuples, but with certain changes."""
+        modified_actual = set()
+        for imp in actual:
+            self.assertIsInstance(imp, slicker.SymbolImport)
+            self.assertIsInstance(imp[0], slicker.Import)
+            (name, alias, start, end, node), symbol, symbol_alias = imp
+            self.assertIsInstance(node, (ast.Import, ast.ImportFrom))
+            modified_actual.add(
+                ((name, alias, start, end), symbol, symbol_alias))
+        self.assertEqual(modified_actual, expected)
+
+    # TODO(benkraft): Move some of this to a separate ComputeAllImportsTest.
     def test_simple(self):
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo', ['import foo\n']),
-            {('foo', 'foo', 'foo')})
+                'foo', 'import foo\n'),
+            {(('foo', 'foo', 0, 10), 'foo', 'foo')})
 
     def test_with_dots(self):
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['import foo.bar.baz\n']),
-            {('foo.bar.baz', 'foo.bar.baz', 'foo.bar.baz')})
+                'foo.bar.baz', 'import foo.bar.baz\n'),
+            {(('foo.bar.baz', 'foo.bar.baz', 0, 18),
+              'foo.bar.baz', 'foo.bar.baz')})
 
     def test_from_import(self):
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['from foo.bar import baz\n']),
-            {('foo.bar.baz', 'baz', 'baz')})
+                'foo.bar.baz', 'from foo.bar import baz\n'),
+            {(('foo.bar.baz', 'baz', 0, 23), 'foo.bar.baz', 'baz')})
 
     def test_implicit_import(self):
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['import foo\n']),
-            {('foo', 'foo', 'foo.bar.baz')})
-        self.assertEqual(
+                'foo.bar.baz', 'import foo\n'),
+            {(('foo', 'foo', 0, 10), 'foo.bar.baz', 'foo.bar.baz')})
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['import foo.quux\n']),
-            {('foo.quux', 'foo.quux', 'foo.bar.baz')})
-        self.assertEqual(
+                'foo.bar.baz', 'import foo.quux\n'),
+            {(('foo.quux', 'foo.quux', 0, 15), 'foo.bar.baz', 'foo.bar.baz')})
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['import foo.bar\n']),
-            {('foo.bar', 'foo.bar', 'foo.bar.baz')})
-        self.assertEqual(
+                'foo.bar.baz', 'import foo.bar\n'),
+            {(('foo.bar', 'foo.bar', 0, 14), 'foo.bar.baz', 'foo.bar.baz')})
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['import foo.bar.quux\n']),
-            {('foo.bar.quux', 'foo.bar.quux', 'foo.bar.baz')})
-        self.assertEqual(
+                'foo.bar.baz', 'import foo.bar.quux\n'),
+            {(('foo.bar.quux', 'foo.bar.quux', 0, 19),
+              'foo.bar.baz', 'foo.bar.baz')})
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['import foo.bar.baz.quux\n']),
-            {('foo.bar.baz.quux', 'foo.bar.baz.quux', 'foo.bar.baz')})
+                'foo.bar.baz', 'import foo.bar.baz.quux\n'),
+            {(('foo.bar.baz.quux', 'foo.bar.baz.quux', 0, 23),
+              'foo.bar.baz', 'foo.bar.baz')})
 
     def test_implicit_from_import(self):
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['from foo.bar import quux\n']),
+                'foo.bar.baz', 'from foo.bar import quux\n'),
             set())
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['from foo import bar\n']),
-            {('foo.bar', 'bar', 'bar.baz')})
+                'foo.bar.baz', 'from foo import bar\n'),
+            {(('foo.bar', 'bar', 0, 19), 'foo.bar.baz', 'bar.baz')})
 
     def test_as_import(self):
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo', ['import foo as bar\n']),
-            {('foo', 'bar', 'bar')})
-        self.assertEqual(
+                'foo', 'import foo as bar\n'),
+            {(('foo', 'bar', 0, 17), 'foo', 'bar')})
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['import foo.bar.baz as quux\n']),
-            {('foo.bar.baz', 'quux', 'quux')})
-        self.assertEqual(
+                'foo.bar.baz', 'import foo.bar.baz as quux\n'),
+            {(('foo.bar.baz', 'quux', 0, 26), 'foo.bar.baz', 'quux')})
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['from foo.bar import baz as quux\n']),
-            {('foo.bar.baz', 'quux', 'quux')})
+                'foo.bar.baz', 'from foo.bar import baz as quux\n'),
+            {(('foo.bar.baz', 'quux', 0, 31), 'foo.bar.baz', 'quux')})
 
     def test_implicit_as_import(self):
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['import foo as quux\n']),
-            {('foo', 'quux', 'quux.bar.baz')})
-        self.assertEqual(
+                'foo.bar.baz', 'import foo as quux\n'),
+            {(('foo', 'quux', 0, 18), 'foo.bar.baz', 'quux.bar.baz')})
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['import foo.bar as quux\n']),
-            {('foo.bar', 'quux', 'quux.baz')})
-        self.assertEqual(
+                'foo.bar.baz', 'import foo.bar as quux\n'),
+            {(('foo.bar', 'quux', 0, 22), 'foo.bar.baz', 'quux.baz')})
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['import foo.bar.quux as bogus\n']),
+                'foo.bar.baz', 'import foo.bar.quux as bogus\n'),
             set())
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['from foo import bar as quux\n']),
-            {('foo.bar', 'quux', 'quux.baz')})
-        self.assertEqual(
+                'foo.bar.baz', 'from foo import bar as quux\n'),
+            {(('foo.bar', 'quux', 0, 27), 'foo.bar.baz', 'quux.baz')})
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['from foo.bar import quux as bogus\n']),
+                'foo.bar.baz', 'from foo.bar import quux as bogus\n'),
             set())
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['import foo.bar.baz.quux as bogus\n']),
+                'foo.bar.baz', 'import foo.bar.baz.quux as bogus\n'),
             set())
 
     def test_other_imports(self):
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo', ['import bogus\n']),
+                'foo', 'import bogus\n'),
             set())
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['import bogus.foo.bar.baz\n']),
+                'foo.bar.baz', 'import bogus.foo.bar.baz\n'),
             set())
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo', ['from bogus import foo\n']),
+                'foo', 'from bogus import foo\n'),
             set())
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['from bogus import foo\n']),
+                'foo.bar.baz', 'from bogus import foo\n'),
             set())
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['from bogus import foo, bar\n']),
+                'foo.bar.baz', 'from bogus import foo, bar\n'),
             set())
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['from foo.bogus import bar, baz\n']),
+                'foo.bar.baz', 'from foo.bogus import bar, baz\n'),
             set())
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['import bar, baz\n']),
+                'foo.bar.baz', 'import bar, baz\n'),
             set())
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', ['import bar as foo, baz as quux\n']),
+                'foo.bar.baz', 'import bar as foo, baz as quux\n'),
             set())
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo', ['import bogus  # (with a comment)\n']),
+                'foo', 'import bogus  # (with a comment)\n'),
             set())
 
     def test_other_junk(self):
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo', ['# import foo\n']),
+                'foo', '# import foo\n'),
             set())
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo', ['                  # import foo\n']),
+                'foo', '                  # import foo\n'),
             set())
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo', ['def foo():\n']),
+                'foo', 'def foo():\n'),
             set())
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo', ['imports are "fun" in a multiline string']),
+                'foo', 'imports are "fun" in a multiline string'),
             set())
 
     def test_with_context(self):
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo', [
-                    '# import foo as bar\n',
-                    'import os\n',
-                    'import sys\n',
-                    '\n',
-                    'import bogus\n',
-                    'import foo\n',
-                    '\n',
-                    'def foo():\n',
-                    '    return 1\n',
-                ]),
-            {('foo', 'foo', 'foo')})
+                'foo',
+                '# import foo as bar\n'
+                'import os\n'
+                'import sys\n'
+                '\n'
+                'import bogus\n'
+                'import foo\n'
+                '\n'
+                'def foo():\n'
+                '    return 1\n'),
+            {(('foo', 'foo', 55, 65), 'foo', 'foo')})
 
     def test_multiple_imports(self):
-        self.assertEqual(
+        self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', [
-                    'import foo\n',
-                    'import foo.bar.baz\n',
-                    'from foo.bar import baz\n',
-                    'import foo.quux\n',
-                ]),
-            {('foo', 'foo', 'foo.bar.baz'),
-             ('foo.bar.baz', 'foo.bar.baz', 'foo.bar.baz'),
-             ('foo.bar.baz', 'baz', 'baz'),
-             ('foo.quux', 'foo.quux', 'foo.bar.baz')})
+                'foo.bar.baz',
+                'import foo\n'
+                'import foo.bar.baz\n'
+                'from foo.bar import baz\n'
+                'import foo.quux\n'),
+            {(('foo', 'foo', 0, 10), 'foo.bar.baz', 'foo.bar.baz'),
+             (('foo.bar.baz', 'foo.bar.baz', 11, 29),
+              'foo.bar.baz', 'foo.bar.baz'),
+             (('foo.bar.baz', 'baz', 30, 53), 'foo.bar.baz', 'baz'),
+             (('foo.quux', 'foo.quux', 54, 69), 'foo.bar.baz', 'foo.bar.baz')})
 
 
 class DottedPrefixTest(unittest.TestCase):
@@ -216,73 +229,59 @@ class DottedPrefixTest(unittest.TestCase):
 class NamesStartingWithTest(unittest.TestCase):
     def test_simple(self):
         self.assertEqual(
-            slicker._names_starting_with('a', ['a\n']),
+            slicker._names_starting_with('a', 'a\n'),
             {'a'})
         self.assertEqual(
-            slicker._names_starting_with('a', ['a.b.c\n']),
-            {'a', 'a.b', 'a.b.c'})
+            slicker._names_starting_with('a', 'a.b.c\n'),
+            {'a.b.c'})
         self.assertEqual(
-            slicker._names_starting_with('a', ['d.e.f\n']),
+            slicker._names_starting_with('a', 'd.e.f\n'),
             set())
 
         self.assertEqual(
-            slicker._names_starting_with('abc', ['abc.de\n']),
-            {'abc', 'abc.de'})
+            slicker._names_starting_with('abc', 'abc.de\n'),
+            {'abc.de'})
         self.assertEqual(
-            slicker._names_starting_with('ab', ['abc.de\n']),
+            slicker._names_starting_with('ab', 'abc.de\n'),
             set())
 
         self.assertEqual(
-            slicker._names_starting_with('a', ['"a.b.c"\n']),
+            slicker._names_starting_with('a', '"a.b.c"\n'),
             set())
         self.assertEqual(
-            slicker._names_starting_with('a', ['import a.b.c\n']),
+            slicker._names_starting_with('a', 'import a.b.c\n'),
             set())
         self.assertEqual(
-            slicker._names_starting_with('a', ['b.c.a.b.c\n']),
+            slicker._names_starting_with('a', 'b.c.a.b.c\n'),
             set())
 
     def test_in_context(self):
         self.assertEqual(
-            slicker._names_starting_with('a', [
-                'def abc():\n',
-                '    if a.b == a.c:\n',
-                '        return a.d(a.e + a.f)\n',
-                'abc(a.g)\n']),
-            {'a', 'a.b', 'a.c', 'a.d', 'a.e', 'a.f', 'a.g'})
-
-
-codemod.Patch.__repr__ = lambda self: 'Patch<%s>' % self.__dict__
-codemod.Patch.__eq__ = lambda self, other: self.__dict__ == other.__dict__
+            slicker._names_starting_with('a', (
+                'def abc():\n'
+                '    if a.b == a.c:\n'
+                '        return a.d(a.e + a.f)\n'
+                'abc(a.g)\n')),
+            {'a.b', 'a.c', 'a.d', 'a.e', 'a.f', 'a.g'})
 
 
 class FullFileTest(unittest.TestCase):
     maxDiff = None
 
-    def setUp(self):
-        self.tempdir = tempfile.mkdtemp()
-        self.origdir = os.getcwd()
-
-    def tearDown(self):
-        shutil.rmtree(self.tempdir, ignore_errors=True)
-        os.chdir(self.origdir)
-
-    def run_test(self, filebase, suggestor):
-        filename = os.path.join(self.tempdir, '%s_in.py' % filebase)
-        shutil.copy("testdata/%s_in.py" % filebase, filename)
-        with open('testdata/%s_out.py' % filebase) as f:
-            expected_out = f.read()
-
-        os.chdir(self.tempdir)
-        path_filter = codemod.path_filter(['py'])
-        codemod.base.yes_to_all = True
-        query = codemod.Query(suggestor, path_filter=path_filter,
-                              root_directory=self.tempdir)
-        query.run_interactive()
-
-        with open(filename) as f:
-            actual_out = f.read()
-        self.assertEqual(expected_out, actual_out)
+    def run_test(self, filebase, suggestor,
+                 expected_warnings=(), expected_error=None):
+        with open('testdata/%s_in.py' % filebase) as f:
+            input_text = f.read()
+        if expected_error:
+            output_text = None
+        else:
+            with open('testdata/%s_out.py' % filebase) as f:
+                output_text = f.read()
+        test_frontend = khodemod.TestFrontend(input_text)
+        test_frontend.run_suggestor(suggestor)
+        test_frontend.run_suggestor(slicker.import_sort_suggestor)
+        test_frontend.do_asserts(
+            self, output_text, expected_warnings, expected_error)
 
     def test_simple(self):
         self.run_test(
@@ -309,7 +308,10 @@ class FullFileTest(unittest.TestCase):
         self.run_test(
             'implicit',
             slicker.the_suggestor('foo.bar.baz.some_function',
-                                  'quux.new_name', 'quux'))
+                                  'quux.new_name', 'quux'),
+            expected_warnings=[
+                khodemod.WarningInfo(
+                    pos=13, message='This import may be used implicitly.')])
 
     def test_double_implicit(self):
         self.run_test(
@@ -339,19 +341,26 @@ class FullFileTest(unittest.TestCase):
             'conflict',
             slicker.the_suggestor('foo.bar.interesting_function',
                                   'bar.interesting_function', 'bar',
-                                  use_alias='foo'))
+                                  use_alias='foo'),
+            expected_error=khodemod.FatalError(
+                0, 'Your alias will conflict with imports in this file.'))
 
     def test_conflict_2(self):
         self.run_test(
             'conflict_2',
             slicker.the_suggestor('bar.interesting_function',
-                                  'foo.bar.interesting_function', 'foo.bar'))
+                                  'foo.bar.interesting_function', 'foo.bar'),
+            expected_error=khodemod.FatalError(
+                0, 'Your alias will conflict with imports in this file.'))
 
     def test_unused(self):
         self.run_test(
             'unused',
             slicker.the_suggestor('foo.bar.some_function',
-                                  'quux.some_function', 'quux'))
+                                  'quux.some_function', 'quux'),
+            expected_warnings=[
+                khodemod.WarningInfo(
+                    pos=49, message='Not removing import with @Nolint.')])
 
     def test_many_imports(self):
         self.run_test(

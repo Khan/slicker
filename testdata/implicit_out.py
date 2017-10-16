@@ -1,5 +1,5 @@
 # does stuff
-import foo.bar.baz  # STOPSHIP: This import may be used implicitly.
+import foo.bar.baz
 import quux
 
 
