@@ -179,7 +179,8 @@ class Frontend(object):
                 if warnings:
                     warnings.sort(key=lambda w: w.pos)
                     self.handle_warnings(path, warnings)
-                self.handle_patches(path, patches)
+                if patches:
+                    self.handle_patches(path, patches)
             except FatalError as e:
                 self.handle_error(path, e)
 
