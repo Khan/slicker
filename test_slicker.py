@@ -229,39 +229,39 @@ class DottedPrefixTest(unittest.TestCase):
 class NamesStartingWithTest(unittest.TestCase):
     def test_simple(self):
         self.assertEqual(
-            slicker._names_starting_with('a', 'a\n'),
+            set(slicker._names_starting_with('a', 'a\n')),
             {'a'})
         self.assertEqual(
-            slicker._names_starting_with('a', 'a.b.c\n'),
+            set(slicker._names_starting_with('a', 'a.b.c\n')),
             {'a.b.c'})
         self.assertEqual(
-            slicker._names_starting_with('a', 'd.e.f\n'),
+            set(slicker._names_starting_with('a', 'd.e.f\n')),
             set())
 
         self.assertEqual(
-            slicker._names_starting_with('abc', 'abc.de\n'),
+            set(slicker._names_starting_with('abc', 'abc.de\n')),
             {'abc.de'})
         self.assertEqual(
-            slicker._names_starting_with('ab', 'abc.de\n'),
+            set(slicker._names_starting_with('ab', 'abc.de\n')),
             set())
 
         self.assertEqual(
-            slicker._names_starting_with('a', '"a.b.c"\n'),
+            set(slicker._names_starting_with('a', '"a.b.c"\n')),
             set())
         self.assertEqual(
-            slicker._names_starting_with('a', 'import a.b.c\n'),
+            set(slicker._names_starting_with('a', 'import a.b.c\n')),
             set())
         self.assertEqual(
-            slicker._names_starting_with('a', 'b.c.a.b.c\n'),
+            set(slicker._names_starting_with('a', 'b.c.a.b.c\n')),
             set())
 
     def test_in_context(self):
         self.assertEqual(
-            slicker._names_starting_with('a', (
+            set(slicker._names_starting_with('a', (
                 'def abc():\n'
                 '    if a.b == a.c:\n'
                 '        return a.d(a.e + a.f)\n'
-                'abc(a.g)\n')),
+                'abc(a.g)\n'))),
             {'a.b', 'a.c', 'a.d', 'a.e', 'a.f', 'a.g'})
 
 

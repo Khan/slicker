@@ -145,14 +145,16 @@ def _all_names(root):
     Does not include imports or string references or anything else funky like
     that, and only returns the "biggest" possible name -- if you reference
     a.b.c we won't include a.b.
+
+    Returns pairs (name, node)
     """
     name = _name_for_node(root)
     if name:
-        return {name}
+        return {(name, root)}
     else:
-        return {name
-                for node in ast.iter_child_nodes(root)
-                for name in _all_names(node)}
+        return {(name, node)
+                for child in ast.iter_child_nodes(root)
+                for name, node in _all_names(child)}
 
 
 def _names_starting_with(prefix, body):
@@ -161,22 +163,18 @@ def _names_starting_with(prefix, body):
     Does not include imports or string references or anything else funky like
     that.  "Beginning with prefix" in the dotted sense (see
     _dotted_starts_with).
+
+    Returns a dict of name -> list of nodes.
     """
     root = ast.parse(body)
-    return {name for name in _all_names(root)
-            if _dotted_starts_with(name, prefix)}
-
-
-def _had_any_references(name, imports, body):
-    for imp in imports:
-        if _dotted_starts_with(name, imp.imp.name):
-            # An explicit import of the name or a prefix (e.g. module)
-            # TODO(benkraft): This is currently too loose, and should only look
-            # for prefixes module <= prefix <= name.
-            return True
-        if _names_starting_with(name, body):
-            return True
-    return False
+    # Add token metadata.  TODO(benkraft): pass things around to avoid this
+    # side effect.
+    asttokens.ASTTokens(body, tree=root)
+    retval = {}
+    for name, node in _all_names(root):
+        if _dotted_starts_with(name, prefix):
+            retval.setdefault(name, []).append(node)
+    return retval
 
 
 def _check_import_conflicts(body, added_name, is_alias):
@@ -227,8 +225,8 @@ def _imports_to_remove(old_imports, new_name, patched_aliases, body):
             removable_imports.add(imp.imp)
         elif imp.alias in patched_aliases:
             # Anything starting with the relevant prefix.
-            relevant_names = _names_starting_with(
-                imp.imp.alias.split('.')[0], body)
+            relevant_names = set(_names_starting_with(
+                imp.imp.alias.split('.')[0], body))
             handled_names = {
                 name for name in relevant_names
                 if _dotted_starts_with(name, imp.alias)}
@@ -315,12 +313,8 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
             if name_to_import == imp.imp.name}
 
         # If we didn't import the module at all, nothing to do.
-        if not old_imports:
-            return
-
-        # Or if we didn't reference it, and didn't explicitly import it.
         # TODO(benkraft): We should still look for mocks and such here.
-        if not _had_any_references(old_name, old_imports, body):
+        if not old_imports:
             return
 
         old_aliases = {imp.alias for imp in old_imports}
@@ -353,17 +347,13 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
         # If any alias changed, we need to fix up references.  (We'll fix
         # up imports either way at this point.)
         for imp in old_aliases - {final_new_name}:
-            old_final_re = _re_for_name(imp)
-            base_suggestor = khodemod.regex_suggestor(
-                old_final_re, final_new_name)
-            for patch in base_suggestor(filename, body):
-                # If this is any import, skip it entirely.
-                if any(imp.start <= patch.end and patch.start <= imp.end
-                       for imp in _compute_all_imports(body)):
-                    continue
-                if patch.old != patch.new:
+            for name, nodes in _names_starting_with(imp, body).iteritems():
+                for node in nodes:
+                    start, end = tokens.get_text_range(node)
                     patched_aliases.add(imp)
-                    yield patch
+                    yield khodemod.Patch(
+                        body[start:end], final_new_name + name[len(imp):],
+                        start, end)
 
         # PART THE THIRD:
         #    Add/remove imports, if necessary.
@@ -421,10 +411,9 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
 
             # Decide where to add it.
             explicit_imports = {imp for imp in old_imports
-                                # TODO(benkraft): As in _had_any_references,
-                                # this is too weak -- we should only call an
-                                # import explicit if it is of the symbol's
-                                # module.
+                                # TODO(benkraft): This is too weak -- we should
+                                # only call an import explicit if it is of the
+                                # symbol's module.
                                 if _dotted_starts_with(old_name, imp.imp.name)}
 
             if explicit_imports:
