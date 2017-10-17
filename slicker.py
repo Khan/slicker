@@ -25,6 +25,10 @@ def _re_for_name(name):
                       re.escape(name).replace(r'\.', r'\s*\.\s*'))
 
 
+def _filename_for_module_name(module_name):
+    return '%s.py' % module_name.replace('.', '/')
+
+
 class FakeOptions(object):
     safe_headers = True
 
@@ -418,12 +422,21 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
                         start, end)
 
         # Fix up references in strings and comments.  We look for both the
-        # fully-qualified name and any aliases in use in this file.  We always
-        # replace fully-qualified references with fully-qualified references;
+        # fully-qualified name and any aliases in use in this file, as well as
+        # the filename if we are moving a module.  We always replace
+        # fully-qualified references with fully-qualified references;
         # references to aliases get replaced with whatever we're using for the
         # rest of the file.
-        # TODO(benkraft): If we are moving a file, also fix up references to
-        # the filename.
+        regexes_to_check = [(_re_for_name(old_name), new_name)]
+        for imp in old_aliases - {final_new_name, old_name}:
+            regexes_to_check.append((_re_for_name(imp), final_new_name))
+        if new_name == name_to_import:
+            # We are moving a module, also check for the filename.
+            # TODO(benkraft): Not strictly true; we could be importing a
+            # symbol.  But KA doesn't do that.
+            regexes_to_check.append((
+                re.compile(re.escape(_filename_for_module_name(old_name))),
+                _filename_for_module_name(new_name)))
 
         # Strings
         for node in ast.walk(file_info.tree):
@@ -431,25 +444,19 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
                 start, end = file_info.tokens.get_text_range(node)
                 str_tokens = list(
                     file_info.tokens.get_tokens(node, include_extra=True))
-                for imp in (old_aliases - {final_new_name}) | {old_name}:
-                    old_name_re = _re_for_name(imp)
-                    if old_name_re.search(node.s):
-                        replacement = (
-                            new_name if imp == old_name else final_new_name)
+                for regex, replacement in regexes_to_check:
+                    if regex.search(node.s):
                         for patch in _replace_in_string(
-                                str_tokens, old_name_re, replacement, body):
+                                str_tokens, regex, replacement, body):
                             yield patch
 
         # Comments
         for token in file_info.tokens.tokens:
             if token.type == tokenize.COMMENT:
-                for imp in (old_aliases - {final_new_name}) | {old_name}:
-                    old_name_re = _re_for_name(imp)
-                    replacement = (
-                        new_name if imp == old_name else final_new_name)
+                for regex, replacement in regexes_to_check:
                     # TODO(benkraft): Handle names broken across multiple lines
                     # of comments.
-                    for match in old_name_re.finditer(token.string):
+                    for match in regex.finditer(token.string):
                         yield khodemod.Patch(
                             match.group(0), replacement,
                             match.start() + token.startpos,

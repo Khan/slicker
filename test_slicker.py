@@ -416,3 +416,9 @@ class FullFileTest(unittest.TestCase):
             slicker.the_suggestor('foo.bar.some_function',
                                   'quux.mod.some_function', 'quux.mod',
                                   use_alias='al'))
+
+    def test_comments_whole_file(self):
+        self.run_test(
+            'comments_whole_file',
+            slicker.the_suggestor('foo.bar', 'quux.mod', 'quux.mod',
+                                  use_alias='al'))
