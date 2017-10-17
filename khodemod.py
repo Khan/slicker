@@ -128,6 +128,9 @@ def line_col_to_pos(text, line, col):
 
 
 class Frontend(object):
+    def __init__(self):
+        self._modified_files = set()
+
     def handle_patches(self, filename, patches):
         """Accept a list of patches for a file, and apply them.
 
@@ -157,6 +160,11 @@ class Frontend(object):
         with open(filename) as f:
             return f.read()
 
+    def write_file(self, filename, text):
+        with open(filename, 'w') as f:
+            f.write(text)
+            self._modified_files.add(filename)
+
     def resolve_paths(self, path_filter, root='.'):
         for dirpath, dirnames, filenames in os.walk(root):
             # TODO(benkraft): Avoid traversing excluded directories.
@@ -165,29 +173,42 @@ class Frontend(object):
                 if path_filter(relname):
                     yield relname
 
+    def _run_suggestor_on_file(self, suggestor, path):
+        try:
+            # Ensure the entire suggestor runs before we start patching.
+            vals = list(suggestor(path, self.read_file(path)))
+            patches = [p for p in vals if isinstance(p, Patch)
+                       and p.old != p.new]
+            # HACK: consider addition-ish before deletion-ish.
+            patches.sort(key=lambda p: (p.start, len(p.old) - len(p.new)))
+            warnings = [w for w in vals if isinstance(w, WarningInfo)]
+            if warnings:
+                warnings.sort(key=lambda w: w.pos)
+                self.handle_warnings(path, warnings)
+            if patches:
+                self.handle_patches(path, patches)
+        except FatalError as e:
+            self.handle_error(path, e)
+
     def run_suggestor(self, suggestor,
                       path_filter=default_path_filter(), root='.'):
         for path in self.resolve_paths(path_filter, root):
-            # Ensure the entire suggestor runs before we start patching.
-            try:
-                vals = list(suggestor(path, self.read_file(path)))
-                patches = [p for p in vals if isinstance(p, Patch)
-                           and p.old != p.new]
-                # HACK: consider addition-ish before deletion-ish.
-                patches.sort(key=lambda p: (p.start, len(p.old) - len(p.new)))
-                warnings = [w for w in vals if isinstance(w, WarningInfo)]
-                if warnings:
-                    warnings.sort(key=lambda w: w.pos)
-                    self.handle_warnings(path, warnings)
-                if patches:
-                    self.handle_patches(path, patches)
-            except FatalError as e:
-                self.handle_error(path, e)
+            self._run_suggestor_on_file(suggestor, path)
+
+    def run_suggestor_on_modified_files(self, suggestor):
+        """Like run_suggestor, but only on files we've modified.
+
+        Useful for fixups after the fact that we don't want to apply to the
+        whole codebase, only the files we touched.
+        """
+        for path in self._modified_files:
+            self._run_suggestor_on_file(suggestor, path)
 
 
 class AcceptingFrontend(Frontend):
     """A frontend where we apply all patches without question."""
-    def __init__(self, verbose=False):
+    def __init__(self, verbose=False, **kwargs):
+        super(AcceptingFrontend, self).__init__(**kwargs)
         self.verbose = verbose
 
     def handle_patches(self, filename, patches):
@@ -200,8 +221,7 @@ class AcceptingFrontend(Frontend):
         for patch in reversed(patches):
             new_body = patch.apply_to(new_body)
         if body != new_body:
-            with open(filename, 'w') as f:
-                f.write(new_body)
+            self.write_file(filename, new_body)
 
     def handle_warnings(self, filename, warnings):
         body = self.read_file(filename)

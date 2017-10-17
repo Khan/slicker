@@ -602,7 +602,7 @@ def main():
     # TODO(benkraft): Support other khodemod frontends.
     frontend = khodemod.AcceptingFrontend(verbose=parsed_args.verbose)
     frontend.run_suggestor(suggestor)
-    frontend.run_suggestor(import_sort_suggestor)
+    frontend.run_suggestor_on_modified_files(import_sort_suggestor)
 
 
 if __name__ == '__main__':
