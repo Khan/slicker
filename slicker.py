@@ -603,10 +603,9 @@ def main():
                         help=('Treat moved name as an individual symbol, '
                               'rather than a whole module.'))
     parser.add_argument('-a', '--alias', metavar='ALIAS',
-                        help=('Alias to use when adding new import lines.'
-                              'If this has a dot (e.g. it is a symbol, not a '
-                              'module), all parts except the first must match '
-                              'the real name.'))
+                        help=('Alias to use when adding new import lines.  '
+                              'This is the module-alias, even if you are '
+                              'moving a symbol.'))
     parser.add_argument('-v', '--verbose', action='store_true',
                         help="Print some information about what we're doing.")
     parsed_args = parser.parse_args()
