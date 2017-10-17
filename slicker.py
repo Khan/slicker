@@ -621,8 +621,14 @@ def main():
                               name_to_import, use_alias=parsed_args.alias)
     # TODO(benkraft): Support other khodemod frontends.
     frontend = khodemod.AcceptingFrontend(verbose=parsed_args.verbose)
+    if parsed_args.verbose:
+        print "===== Updating references ====="
     frontend.run_suggestor(suggestor)
+    if parsed_args.verbose:
+        print "====== Resorting imports ======"
     frontend.run_suggestor_on_modified_files(import_sort_suggestor)
+    if parsed_args.verbose:
+        print "======== Move complete! ======="
 
 
 if __name__ == '__main__':

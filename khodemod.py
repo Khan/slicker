@@ -11,6 +11,8 @@ TODO(benkraft): Implement other frontends.
 import collections
 import os
 
+import tqdm
+
 
 DEFAULT_EXCLUDE_PATHS = ('genfiles', 'third_party')
 DEFAULT_EXTENSIONS = ('py',)
@@ -173,6 +175,13 @@ class Frontend(object):
                 if path_filter(relname):
                     yield relname
 
+    def progress_bar(self, paths):
+        """Return the passed iterable of paths, and perhaps update progress.
+
+        Subclasses may override.
+        """
+        return paths
+
     def _run_suggestor_on_file(self, suggestor, path):
         try:
             # Ensure the entire suggestor runs before we start patching.
@@ -192,7 +201,7 @@ class Frontend(object):
 
     def run_suggestor(self, suggestor,
                       path_filter=default_path_filter(), root='.'):
-        for path in self.resolve_paths(path_filter, root):
+        for path in self.progress_bar(self.resolve_paths(path_filter, root)):
             self._run_suggestor_on_file(suggestor, path)
 
     def run_suggestor_on_modified_files(self, suggestor):
@@ -201,7 +210,7 @@ class Frontend(object):
         Useful for fixups after the fact that we don't want to apply to the
         whole codebase, only the files we touched.
         """
-        for path in self._modified_files:
+        for path in self.progress_bar(self._modified_files):
             self._run_suggestor_on_file(suggestor, path)
 
 
@@ -211,9 +220,15 @@ class AcceptingFrontend(Frontend):
         super(AcceptingFrontend, self).__init__(**kwargs)
         self.verbose = verbose
 
-    def handle_patches(self, filename, patches):
+    def progress_bar(self, paths):
         if self.verbose:
-            print "INFO:Applying %s patches to %s" % (len(patches), filename)
+            paths = list(
+                tqdm.tqdm(paths, desc='Computing paths', unit=' files'))
+            return tqdm.tqdm(paths, desc='Applying changes', unit=' files')
+        else:
+            return paths
+
+    def handle_patches(self, filename, patches):
         body = self.read_file(filename)
         # We operate in reverse order to avoid having to keep track of changing
         # offsets.
