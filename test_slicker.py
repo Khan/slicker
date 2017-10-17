@@ -23,175 +23,198 @@ class DetermineImportsTest(unittest.TestCase):
     def test_simple(self):
         self._assert_imports(
             slicker._determine_imports(
-                'foo', 'import foo\n'),
+                'foo', slicker.File(None, 'import foo\n')),
             {(('foo', 'foo', 0, 10), 'foo', 'foo')})
 
     def test_with_dots(self):
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'import foo.bar.baz\n'),
+                'foo.bar.baz', slicker.File(None, 'import foo.bar.baz\n')),
             {(('foo.bar.baz', 'foo.bar.baz', 0, 18),
               'foo.bar.baz', 'foo.bar.baz')})
 
     def test_from_import(self):
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'from foo.bar import baz\n'),
+                'foo.bar.baz',
+                slicker.File(None, 'from foo.bar import baz\n')),
             {(('foo.bar.baz', 'baz', 0, 23), 'foo.bar.baz', 'baz')})
 
     def test_implicit_import(self):
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'import foo\n'),
+                'foo.bar.baz', slicker.File(None, 'import foo\n')),
             {(('foo', 'foo', 0, 10), 'foo.bar.baz', 'foo.bar.baz')})
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'import foo.quux\n'),
+                'foo.bar.baz', slicker.File(None, 'import foo.quux\n')),
             {(('foo.quux', 'foo.quux', 0, 15), 'foo.bar.baz', 'foo.bar.baz')})
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'import foo.bar\n'),
+                'foo.bar.baz', slicker.File(None, 'import foo.bar\n')),
             {(('foo.bar', 'foo.bar', 0, 14), 'foo.bar.baz', 'foo.bar.baz')})
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'import foo.bar.quux\n'),
+                'foo.bar.baz', slicker.File(None, 'import foo.bar.quux\n')),
             {(('foo.bar.quux', 'foo.bar.quux', 0, 19),
               'foo.bar.baz', 'foo.bar.baz')})
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'import foo.bar.baz.quux\n'),
+                'foo.bar.baz',
+                slicker.File(None, 'import foo.bar.baz.quux\n')),
             {(('foo.bar.baz.quux', 'foo.bar.baz.quux', 0, 23),
               'foo.bar.baz', 'foo.bar.baz')})
 
     def test_implicit_from_import(self):
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'from foo.bar import quux\n'),
+                'foo.bar.baz',
+                slicker.File(None, 'from foo.bar import quux\n')),
             set())
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'from foo import bar\n'),
+                'foo.bar.baz', slicker.File(None, 'from foo import bar\n')),
             {(('foo.bar', 'bar', 0, 19), 'foo.bar.baz', 'bar.baz')})
 
     def test_as_import(self):
         self._assert_imports(
             slicker._determine_imports(
-                'foo', 'import foo as bar\n'),
+                'foo', slicker.File(None, 'import foo as bar\n')),
             {(('foo', 'bar', 0, 17), 'foo', 'bar')})
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'import foo.bar.baz as quux\n'),
+                'foo.bar.baz',
+                slicker.File(None, 'import foo.bar.baz as quux\n')),
             {(('foo.bar.baz', 'quux', 0, 26), 'foo.bar.baz', 'quux')})
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'from foo.bar import baz as quux\n'),
+                'foo.bar.baz',
+                slicker.File(None, 'from foo.bar import baz as quux\n')),
             {(('foo.bar.baz', 'quux', 0, 31), 'foo.bar.baz', 'quux')})
 
     def test_implicit_as_import(self):
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'import foo as quux\n'),
+                'foo.bar.baz',
+                slicker.File(None, 'import foo as quux\n')),
             {(('foo', 'quux', 0, 18), 'foo.bar.baz', 'quux.bar.baz')})
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'import foo.bar as quux\n'),
+                'foo.bar.baz',
+                slicker.File(None, 'import foo.bar as quux\n')),
             {(('foo.bar', 'quux', 0, 22), 'foo.bar.baz', 'quux.baz')})
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'import foo.bar.quux as bogus\n'),
+                'foo.bar.baz',
+                slicker.File(None, 'import foo.bar.quux as bogus\n')),
             set())
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'from foo import bar as quux\n'),
+                'foo.bar.baz',
+                slicker.File(None, 'from foo import bar as quux\n')),
             {(('foo.bar', 'quux', 0, 27), 'foo.bar.baz', 'quux.baz')})
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'from foo.bar import quux as bogus\n'),
+                'foo.bar.baz',
+                slicker.File(None, 'from foo.bar import quux as bogus\n')),
             set())
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'import foo.bar.baz.quux as bogus\n'),
+                'foo.bar.baz',
+                slicker.File(None, 'import foo.bar.baz.quux as bogus\n')),
             set())
 
     def test_other_imports(self):
         self._assert_imports(
             slicker._determine_imports(
-                'foo', 'import bogus\n'),
+                'foo', slicker.File(None, 'import bogus\n')),
             set())
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'import bogus.foo.bar.baz\n'),
+                'foo.bar.baz',
+                slicker.File(None, 'import bogus.foo.bar.baz\n')),
             set())
         self._assert_imports(
             slicker._determine_imports(
-                'foo', 'from bogus import foo\n'),
+                'foo', slicker.File(None, 'from bogus import foo\n')),
             set())
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'from bogus import foo\n'),
+                'foo.bar.baz', slicker.File(None, 'from bogus import foo\n')),
             set())
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'from bogus import foo, bar\n'),
+                'foo.bar.baz',
+                slicker.File(None, 'from bogus import foo, bar\n')),
             set())
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'from foo.bogus import bar, baz\n'),
+                'foo.bar.baz',
+                slicker.File(None, 'from foo.bogus import bar, baz\n')),
             set())
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'import bar, baz\n'),
+                'foo.bar.baz', slicker.File(None, 'import bar, baz\n')),
             set())
         self._assert_imports(
             slicker._determine_imports(
-                'foo.bar.baz', 'import bar as foo, baz as quux\n'),
+                'foo.bar.baz',
+                slicker.File(None, 'import bar as foo, baz as quux\n')),
             set())
         self._assert_imports(
             slicker._determine_imports(
-                'foo', 'import bogus  # (with a comment)\n'),
+                'foo',
+                slicker.File(None, 'import bogus  # (with a comment)\n')),
             set())
 
     def test_other_junk(self):
         self._assert_imports(
             slicker._determine_imports(
-                'foo', '# import foo\n'),
+                'foo', slicker.File(None, '# import foo\n')),
             set())
         self._assert_imports(
             slicker._determine_imports(
-                'foo', '                  # import foo\n'),
+                'foo',
+                slicker.File(None, '                  # import foo\n')),
             set())
         self._assert_imports(
             slicker._determine_imports(
-                'foo', 'def foo():\n'),
+                'foo', slicker.File(None, 'def foo(): pass\n')),
             set())
         self._assert_imports(
             slicker._determine_imports(
-                'foo', 'imports are "fun" in a multiline string'),
+                'foo',
+                slicker.File(None,
+                             '"""imports are "fun" in a multiline string"""')),
             set())
 
     def test_with_context(self):
         self._assert_imports(
             slicker._determine_imports(
                 'foo',
-                '# import foo as bar\n'
-                'import os\n'
-                'import sys\n'
-                '\n'
-                'import bogus\n'
-                'import foo\n'
-                '\n'
-                'def foo():\n'
-                '    return 1\n'),
+                slicker.File(
+                    None,
+                    '# import foo as bar\n'
+                    'import os\n'
+                    'import sys\n'
+                    '\n'
+                    'import bogus\n'
+                    'import foo\n'
+                    '\n'
+                    'def foo():\n'
+                    '    return 1\n')),
             {(('foo', 'foo', 55, 65), 'foo', 'foo')})
 
     def test_multiple_imports(self):
         self._assert_imports(
             slicker._determine_imports(
                 'foo.bar.baz',
-                'import foo\n'
-                'import foo.bar.baz\n'
-                'from foo.bar import baz\n'
-                'import foo.quux\n'),
+                slicker.File(
+                    None,
+                    'import foo\n'
+                    'import foo.bar.baz\n'
+                    'from foo.bar import baz\n'
+                    'import foo.quux\n')),
             {(('foo', 'foo', 0, 10), 'foo.bar.baz', 'foo.bar.baz'),
              (('foo.bar.baz', 'foo.bar.baz', 11, 29),
               'foo.bar.baz', 'foo.bar.baz'),
@@ -229,35 +252,43 @@ class DottedPrefixTest(unittest.TestCase):
 class NamesStartingWithTest(unittest.TestCase):
     def test_simple(self):
         self.assertEqual(
-            set(slicker._names_starting_with('a', 'a\n')),
+            set(slicker._names_starting_with('a', slicker.File(None, 'a\n'))),
             {'a'})
         self.assertEqual(
-            set(slicker._names_starting_with('a', 'a.b.c\n')),
+            set(slicker._names_starting_with(
+                'a', slicker.File(None, 'a.b.c\n'))),
             {'a.b.c'})
         self.assertEqual(
-            set(slicker._names_starting_with('a', 'd.e.f\n')),
+            set(slicker._names_starting_with(
+                'a', slicker.File(None, 'd.e.f\n'))),
             set())
 
         self.assertEqual(
-            set(slicker._names_starting_with('abc', 'abc.de\n')),
+            set(slicker._names_starting_with(
+                'abc', slicker.File(None, 'abc.de\n'))),
             {'abc.de'})
         self.assertEqual(
-            set(slicker._names_starting_with('ab', 'abc.de\n')),
+            set(slicker._names_starting_with(
+                'ab', slicker.File(None, 'abc.de\n'))),
             set())
 
         self.assertEqual(
-            set(slicker._names_starting_with('a', '"a.b.c"\n')),
+            set(slicker._names_starting_with(
+                'a', slicker.File(None, '"a.b.c"\n'))),
             set())
         self.assertEqual(
-            set(slicker._names_starting_with('a', 'import a.b.c\n')),
+            set(slicker._names_starting_with(
+                'a', slicker.File(None, 'import a.b.c\n'))),
             set())
         self.assertEqual(
-            set(slicker._names_starting_with('a', 'b.c.a.b.c\n')),
+            set(slicker._names_starting_with(
+                'a', slicker.File(None, 'b.c.a.b.c\n'))),
             set())
 
     def test_in_context(self):
         self.assertEqual(
-            set(slicker._names_starting_with('a', (
+            set(slicker._names_starting_with('a', slicker.File(
+                None,
                 'def abc():\n'
                 '    if a.b == a.c:\n'
                 '        return a.d(a.e + a.f)\n'

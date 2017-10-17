@@ -51,26 +51,20 @@ SymbolImport = collections.namedtuple(
     'SymbolImport', ['imp', 'symbol', 'alias'])
 
 
-def _compute_all_imports(body):
+def _compute_all_imports(file_info):
     """Returns info about the imports in this file.
 
     Returns a set of Import objects.
     """
-    try:
-        # TODO(benkraft): cache the AST.
-        root = ast.parse(body)
-        tokens = asttokens.ASTTokens(body, tree=root)
-    except SyntaxError:
-        return set()
     imports = set()
-    for node in ast.walk(root):
+    for node in ast.walk(file_info.tree):
         if isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom):
             if isinstance(node, ast.ImportFrom) and node.level != 0:
                 # TODO(benkraft): Figure out how to handle these!  It's
                 # unfortunately tricky for us to get the filename we're working
                 # on, so we just ignore them and cross our fingers for now.
                 continue
-            start, end = tokens.get_text_range(node)
+            start, end = file_info.tokens.get_text_range(node)
             for alias in node.names:
                 if isinstance(node, ast.Import):
                     imports.add(
@@ -83,14 +77,14 @@ def _compute_all_imports(body):
     return imports
 
 
-def _determine_imports(symbol, body):
+def _determine_imports(symbol, file_info):
     """Returns info about the names by which the symbol goes in this file.
 
     Returns a set of SymbolImport namedtuples.
     """
     imports = set()
     symbol_parts = symbol.split('.')
-    for imp in _compute_all_imports(body):
+    for imp in _compute_all_imports(file_info):
         imported_parts = imp.name.split('.')
         if imp.alias == imp.name:
             if imported_parts[0] == symbol_parts[0]:
@@ -157,7 +151,7 @@ def _all_names(root):
                 for name, node in _all_names(child)}
 
 
-def _names_starting_with(prefix, body):
+def _names_starting_with(prefix, file_info):
     """Returns all dotted names in the file beginning with 'prefix'.
 
     Does not include imports or string references or anything else funky like
@@ -166,18 +160,14 @@ def _names_starting_with(prefix, body):
 
     Returns a dict of name -> list of nodes.
     """
-    root = ast.parse(body)
-    # Add token metadata.  TODO(benkraft): pass things around to avoid this
-    # side effect.
-    asttokens.ASTTokens(body, tree=root)
     retval = {}
-    for name, node in _all_names(root):
+    for name, node in _all_names(file_info.tree):
         if _dotted_starts_with(name, prefix):
             retval.setdefault(name, []).append(node)
     return retval
 
 
-def _check_import_conflicts(body, added_name, is_alias):
+def _check_import_conflicts(file_info, added_name, is_alias):
     """Return any imports that will conflict with ours.
 
     added_name should be the name of the import, not the symbol.
@@ -188,7 +178,7 @@ def _check_import_conflicts(body, added_name, is_alias):
     TODO(benkraft): Also check if there are variable-names that
     collide.
     """
-    imports = _compute_all_imports(body)
+    imports = _compute_all_imports(file_info)
     if is_alias:
         # If we are importing with an alias, we're looking for existing
         # imports with whose prefix we collide.
@@ -201,7 +191,7 @@ def _check_import_conflicts(body, added_name, is_alias):
                 if _dotted_starts_with(added_name, imp.alias)}
 
 
-def _imports_to_remove(old_imports, new_name, patched_aliases, body):
+def _imports_to_remove(old_imports, new_name, patched_aliases, file_info):
     """Decide what imports we can remove.
 
     Arguments:
@@ -209,7 +199,7 @@ def _imports_to_remove(old_imports, new_name, patched_aliases, body):
         new_name: the name to which we moved the symbol
         patched_aliases: the set of SymbolImports whose references we
         potentially patched
-        body: the file text
+        file_info: the File object
 
     returns: (set of imports we can remove,
               set of imports that may be used implicitly)
@@ -226,7 +216,7 @@ def _imports_to_remove(old_imports, new_name, patched_aliases, body):
         elif imp.alias in patched_aliases:
             # Anything starting with the relevant prefix.
             relevant_names = set(_names_starting_with(
-                imp.imp.alias.split('.')[0], body))
+                imp.imp.alias.split('.')[0], file_info))
             handled_names = {
                 name for name in relevant_names
                 if _dotted_starts_with(name, imp.alias)}
@@ -259,7 +249,7 @@ def _imports_to_remove(old_imports, new_name, patched_aliases, body):
     return removable_imports, maybe_removable_imports
 
 
-def _get_import_area(imp, tokens):
+def _get_import_area(imp, file_info):
     """Return the start/end character offsets of the whole import region.
 
     We include everything that is part of the same line, as well as its ending
@@ -268,17 +258,17 @@ def _get_import_area(imp, tokens):
     TODO(benkraft): Should we look at preceding full-line comments?  We end up
     fighting with fix_python_imports if we do.
     """
-    toks = list(tokens.get_tokens(imp.node, include_extra=True))
+    toks = list(file_info.tokens.get_tokens(imp.node, include_extra=True))
     first_tok = toks[0]
     last_tok = toks[-1]
 
     # prev_tok will be the last token before the import area, or None if there
     # isn't one.
     prev_tok = next(reversed(
-        [tok for tok in tokens.tokens[:first_tok.index]
+        [tok for tok in file_info.tokens.tokens[:first_tok.index]
          if tok.string == '\n' or not tok.string.isspace()]), None)
 
-    for tok in tokens.tokens[last_tok.index + 1:]:
+    for tok in file_info.tokens.tokens[last_tok.index + 1:]:
         if tok.type == tokenize.COMMENT:
             last_tok = tok
         elif tok.string == '\n':
@@ -348,14 +338,28 @@ def _replace_in_string(str_tokens, regex, replacement, body):
             # space in between; likely the user will rewrap lines anyway.
             replacement = (delims[start_index] + ' ' + delims[end_index] +
                            replacement)
-        yield khodemod.Patch(body[start:end], replacement, start, end)
+        yield khodemod.Patch(
+            body[start:end], replacement, start, end)
+
+
+class File(object):
+    """Represents information about a file.
+
+    TODO(benkraft): Also cache things like _compute_all_imports.
+    """
+    def __init__(self, filename, body):
+        self.filename = filename
+        self.body = body
+        self.tree = ast.parse(body)
+        self.tokens = asttokens.ASTTokens(body, tree=self.tree)
 
 
 def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
     def suggestor(filename, body):
-        # TODO(benkraft): cache the AST.
-        root = ast.parse(body)
-        tokens = asttokens.ASTTokens(body, tree=root)
+        try:
+            file_info = File(filename, body)
+        except Exception as e:
+            raise khodemod.FatalError(0, "Couldn't parse this file: %s" % e)
 
         # PART THE FIRST:
         #    Set things up, do some simple checks, decide whether to operate.
@@ -365,13 +369,13 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
             "%s isn't a valid name to import -- not a prefix of %s" % (
                 name_to_import, new_name))
 
-        old_imports = _determine_imports(old_name, body)
+        old_imports = _determine_imports(old_name, file_info)
         # Choose the alias to replace with.
         # TODO(benkraft): this might not be totally safe if the existing
         # import isn't toplevel, but probably it will be.
         existing_new_imports = {
             imp.alias for imp
-            in _determine_imports(new_name, body)
+            in _determine_imports(new_name, file_info)
             if name_to_import == imp.imp.name}
 
         old_aliases = {imp.alias for imp in old_imports}
@@ -391,7 +395,7 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
 
         if not existing_new_imports:
             dupe_imports = _check_import_conflicts(
-                body, use_alias or name_to_import, bool(use_alias))
+                file_info, use_alias or name_to_import, bool(use_alias))
             if dupe_imports:
                 raise khodemod.FatalError(
                     dupe_imports.pop().start,
@@ -404,9 +408,10 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
         # If any alias changed, we need to fix up references.  (We'll fix
         # up imports either way at this point.)
         for imp in old_aliases - {final_new_name}:
-            for name, nodes in _names_starting_with(imp, body).iteritems():
+            for name, nodes in _names_starting_with(
+                    imp, file_info).iteritems():
                 for node in nodes:
-                    start, end = tokens.get_text_range(node)
+                    start, end = file_info.tokens.get_text_range(node)
                     patched_aliases.add(imp)
                     yield khodemod.Patch(
                         body[start:end], final_new_name + name[len(imp):],
@@ -421,10 +426,11 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
         # the filename.
 
         # Strings
-        for node in ast.walk(root):
+        for node in ast.walk(file_info.tree):
             if isinstance(node, ast.Str):
-                start, end = tokens.get_text_range(node)
-                str_tokens = list(tokens.get_tokens(node, include_extra=True))
+                start, end = file_info.tokens.get_text_range(node)
+                str_tokens = list(
+                    file_info.tokens.get_tokens(node, include_extra=True))
                 for imp in (old_aliases - {final_new_name}) | {old_name}:
                     old_name_re = _re_for_name(imp)
                     if old_name_re.search(node.s):
@@ -435,7 +441,7 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
                             yield patch
 
         # Comments
-        for token in tokens.tokens:
+        for token in file_info.tokens.tokens:
             if token.type == tokenize.COMMENT:
                 for imp in (old_aliases - {final_new_name}) | {old_name}:
                     old_name_re = _re_for_name(imp)
@@ -459,7 +465,7 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
             return
 
         removable_imports, maybe_removable_imports = _imports_to_remove(
-            old_imports, final_new_name, patched_aliases, body)
+            old_imports, final_new_name, patched_aliases, file_info)
 
         if (existing_new_imports and not removable_imports and
                 not maybe_removable_imports):
@@ -470,8 +476,10 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
             yield khodemod.WarningInfo(
                 imp.start, "This import may be used implicitly.")
         for imp in removable_imports:
-            toks = list(tokens.get_tokens(imp.node, include_extra=False))
-            next_tok = tokens.next_token(toks[-1], include_extra=True)
+            toks = list(
+                file_info.tokens.get_tokens(imp.node, include_extra=False))
+            next_tok = file_info.tokens.next_token(
+                toks[-1], include_extra=True)
             if next_tok.type == tokenize.COMMENT and (
                     '@nolint' in next_tok.string.lower() or
                     '@unusedimport' in next_tok.string.lower()):
@@ -483,7 +491,7 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
                 yield khodemod.WarningInfo(
                     imp.start, "I don't know how to edit this import.")
             else:
-                start, end = _get_import_area(imp, tokens)
+                start, end = _get_import_area(imp, file_info)
                 yield khodemod.Patch(body[start:end], '', start, end)
 
         # Consider whether to add an import.
@@ -528,7 +536,7 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
                 # Copy the old import's context.
                 # TODO(benkraft): If the context we copy is a comment, and we
                 # are keeping the old import, maybe don't copy it?
-                start, end = _get_import_area(imp.imp, tokens)
+                start, end = _get_import_area(imp.imp, file_info)
                 text_to_add = ''.join(
                     [body[start:imp.imp.start],
                      import_stmt,
