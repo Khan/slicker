@@ -64,9 +64,8 @@ def _compute_all_imports(file_info):
     for node in ast.walk(file_info.tree):
         if isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom):
             if isinstance(node, ast.ImportFrom) and node.level != 0:
-                # TODO(benkraft): Figure out how to handle these!  It's
-                # unfortunately tricky for us to get the filename we're working
-                # on, so we just ignore them and cross our fingers for now.
+                # TODO(benkraft): Handle these, now that we have access to the
+                # filename we are operating on.
                 continue
             start, end = file_info.tokens.get_text_range(node)
             for alias in node.names:
@@ -285,6 +284,22 @@ def _get_import_area(imp, file_info):
 
 
 def _replace_in_string(str_tokens, regex, replacement, body):
+    """Given a list of tokens representing a string, do a regex-replace.
+
+    This is a bit tricky for a few reasons.  First, there may be multiple
+    tokens, with different delimiters, and spaces in between.  Second, there
+    may be escape sequences; we don't support those in the regex itself but we
+    do want to be able to replace correctly if they're elsewhere in the string.
+
+    Arguments:
+        str_tokens: a list of tokens corresponding to an ast.Str node
+        regex: a compiled regex object
+        replacement: a string to replace with (note we do not support \1-style
+            references)
+        body: the entire text of the file.
+
+    Returns: a generator of khodemod.Patch objects.
+    """
     str_tokens = [tok for tok in str_tokens if tok.type == tokenize.STRING]
     tokens_less_delims = []
     delims = []
@@ -359,7 +374,9 @@ class File(object):
 
 
 def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
+    """The main suggestor to fix all references to a file."""
     def suggestor(filename, body):
+        # TODO(benkraft): This is super ginormous by now, break it up.
         try:
             file_info = File(filename, body)
         except Exception as e:
@@ -368,32 +385,27 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
         # PART THE FIRST:
         #    Set things up, do some simple checks, decide whether to operate.
 
-        # TODO(benkraft): This is super ginormous by now, break it up.
         assert _dotted_starts_with(new_name, name_to_import), (
             "%s isn't a valid name to import -- not a prefix of %s" % (
                 name_to_import, new_name))
 
         old_imports = _determine_imports(old_name, file_info)
-        # Choose the alias to replace with.
-        # TODO(benkraft): this might not be totally safe if the existing
-        # import isn't toplevel, but probably it will be.
+        old_aliases = {imp.alias for imp in old_imports}
+
         existing_new_imports = {
             imp.alias for imp
             in _determine_imports(new_name, file_info)
             if name_to_import == imp.imp.name}
 
-        old_aliases = {imp.alias for imp in old_imports}
-
         # If for some reason there are multiple existing aliases
         # (unlikely), choose the shortest one, to save us line-wrapping.
         # Prefer an existing explicit import to the caller-provided alias.
+        # TODO(benkraft): this might not be totally safe if the existing
+        # import isn't toplevel, but probably it will be.
         if existing_new_imports:
             final_new_name = max(existing_new_imports, key=len)
-        elif use_alias and name_to_import == new_name:
-            final_new_name = use_alias
         elif use_alias:
-            final_new_name = '%s.%s' % (
-                use_alias, new_name[len(name_to_import) + 1:])
+            final_new_name = use_alias + new_name[len(name_to_import):]
         else:
             final_new_name = new_name
 
@@ -408,9 +420,8 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
         # PART THE SECOND:
         #    Patch references to the symbol inline -- everything but imports.
 
+        # First, fix up normal references in code.
         patched_aliases = set()
-        # If any alias changed, we need to fix up references.  (We'll fix
-        # up imports either way at this point.)
         for imp in old_aliases - {final_new_name}:
             for name, nodes in _names_starting_with(
                     imp, file_info).iteritems():
@@ -465,10 +476,10 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
         # PART THE THIRD:
         #    Add/remove imports, if necessary.
 
-        # Nor if we didn't fix up references and would have had to.
         # TODO(benkraft): I think we do extra work here if we don't change the
         # alias but also don't have any references.
         if not patched_aliases and final_new_name not in old_aliases:
+            # We didn't change anything that would require fixing imports.
             return
 
         removable_imports, maybe_removable_imports = _imports_to_remove(
@@ -491,6 +502,7 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
                     '@nolint' in next_tok.string.lower() or
                     '@unusedimport' in next_tok.string.lower()):
                 # Don't touch nolinted imports; they may be there for a reason.
+                # TODO(benkraft): Handle this case for implicit imports as well
                 yield khodemod.WarningInfo(
                     imp.start, "Not removing import with @Nolint.")
             elif ',' in body[imp.start:imp.end]:
@@ -501,7 +513,7 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
                 start, end = _get_import_area(imp, file_info)
                 yield khodemod.Patch(body[start:end], '', start, end)
 
-        # Consider whether to add an import.
+        # Add a new import, if necessary.
         if not existing_new_imports:
             # Decide what the import will say.
             if '.' in name_to_import and use_alias:
@@ -555,6 +567,7 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
 
 
 def import_sort_suggestor(filename, body):
+    """Suggestor to fix up imports in a file."""
     # TODO(benkraft): merge this with the import-adding, so we just show
     # one diff to add in the right place, unless there is additional
     # sorting to do.
