@@ -599,9 +599,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('old_name')
     parser.add_argument('new_name')
-    parser.add_argument('-m', '--module', action='store_true',
-                        help=('Treat moved name as a module, rather than a '
-                              'symbol.'))
+    parser.add_argument('-s', '--symbol', action='store_true',
+                        help=('Treat moved name as an individual symbol, '
+                              'rather than a whole module.'))
     parser.add_argument('-a', '--alias', metavar='ALIAS',
                         help=('Alias to use when adding new import lines.'
                               'If this has a dot (e.g. it is a symbol, not a '
@@ -613,10 +613,10 @@ def main():
     # TODO(benkraft): Allow specifying what paths to operate on.
     # TODO(benkraft): Allow specifying explicitly what to import, so we can
     # import a symbol (although KA never wants to do that).
-    if parsed_args.module:
-        name_to_import = parsed_args.new_name
-    else:
+    if parsed_args.symbol:
         name_to_import, _ = parsed_args.new_name.rsplit('.', 1)
+    else:
+        name_to_import = parsed_args.new_name
     suggestor = the_suggestor(parsed_args.old_name, parsed_args.new_name,
                               name_to_import, use_alias=parsed_args.alias)
     # TODO(benkraft): Support other khodemod frontends.
