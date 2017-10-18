@@ -1,4 +1,36 @@
 #!/usr/bin/env python
+
+"""A tool to move python modules and/or symbols and fix up all references.
+
+Renaming a file (aka module) in python is non-trivial: you not only
+need to rename the file, you need to find all other files that import
+you and fix up their imports.  And if code refers to your file in a
+string (e.g. for mocking) you need to fix that up too.  Slicker is a
+tool to help with that: it will rename the file and fix up references
+in code, strings, and comments.
+
+But wait, there's more!  Slicker can also move individual top-level
+symbols from one file to another.  (The destination file can be new.)
+You can use this to "break up" files into smaller pieces, or just move
+components that would better fit elsewhere.  The types of symbols that
+can be moved are:
+* top-level functions
+* top-level classes
+* top-level constants and variables
+
+High level terminology:
+1) "fullname": the fully-qualified symbol or module being moved.  If you
+   are moving class Importer from foo/bar.py to foo/baz.py, then
+   the old "fullname" is foo.bar.Importer and the new "fullname" is
+   foo.baz.Importer.
+2) "localname": how the symbol-being-moved is referred to in the current
+   file that we're analyzing.  If you're moving class Importer from
+   foo/bar.py to foo/baz.py, and qux.py has a line:
+       import foo.bar as foo_bar
+   then the "localname" while processing qux.py is "foo_bar.Importer".
+"""
+
+
 import argparse
 import ast
 import collections
@@ -21,15 +53,43 @@ import fix_python_imports
 
 
 def _re_for_name(name):
+    """Find a dotted-name (a.b.c) given that Python allows whitespace.
+
+    Note we check for *top-level* dotted names, so we would not match
+    'd.a.b.c.'
+    """
+    # TODO(csilvers): replace '\s*' by '\s*#\s*' below, and then we
+    # can use this to match line-broken dotted-names inside comments too!
     return re.compile(r'(?<!\.)\b%s\b' %
                       re.escape(name).replace(r'\.', r'\s*\.\s*'))
 
 
 def _filename_for_module_name(module_name):
+    """filename is relative to a sys.path entry, such as your project-root."""
     return '%s.py' % module_name.replace('.', '/')
 
 
+def _dotted_starts_with(string, prefix):
+    """Like string.startswith(prefix), but in the dotted sense.
+
+    That is, abc is a prefix of abc.de but not abcde.ghi.
+    """
+    return prefix == string or string.startswith('%s.' % prefix)
+
+
+def _dotted_prefixes(string):
+    """All prefixes of string, in the dotted sense.
+
+    That is, all strings p such that _dotted_starts_with(string, p), in order
+    from shortest to longest.
+    """
+    string_parts = string.split('.')
+    for i in xrange(len(string_parts)):
+        yield '.'.join(string_parts[:i + 1])
+
+
 class FakeOptions(object):
+    """A fake `options` object to pass in to fix_python_imports."""
     safe_headers = True
 
 
@@ -39,24 +99,28 @@ class FakeOptions(object):
 #   start, end: character-indexes delimiting the import
 #   node: the AST node for the import.
 # So for example, 'from foo import bar' would result in an Import with
-# name='foo.bar' and alias='bar'.  If it were at the start of the file it would
-# have start=0, end=19.  See test cases for more examples.
+# name='foo.bar' and alias='bar'.  If it were at the start of the file it
+# would have start=0, end=19.  See test cases for more examples.
 Import = collections.namedtuple(
     'Import', ['name', 'alias', 'start', 'end', 'node'])
 
-# SymbolImport: an import, plus the context for a symbol it brings.
-#   imp: the Import that makes this symbol available
-#   symbol: the symbol we are looking for
-#   alias: the name under which the symbol is made available.
-# So in the above example, if we were searching for foo.bar.some_function(),
-# we'd get a SymbolImport with symbol='foo.bar.some_function' and
-# alias='bar.some_function'.  See test cases for more examples.
-SymbolImport = collections.namedtuple(
-    'SymbolImport', ['imp', 'symbol', 'alias'])
+# LocalName: how a particular name (symbol or module) is referenced
+#            in the current file.
+#   fullname: the fully-qualified name we are looking for
+#   localname: the localname for this name in the current file
+#   imp: the Import that makes this name available (if "name" is for
+#        a module, then the import not only makes the name available,
+#        it *is* the name! [except in weird cases])
+# So in the above example, if we were searching for foo.bar.some_function
+# in a file that had 'from foo import bar', we'd get a LocalName
+# with name='foo.bar.some_function' and localname='bar.some_function'.
+#  See test cases for more examples.
+LocalName = collections.namedtuple(
+    'LocalName', ['fullname', 'localname', 'imp'])
 
 
 def _compute_all_imports(file_info):
-    """Returns info about the imports in this file.
+    """Return info about the imports in this file.
 
     Returns a set of Import objects.
     """
@@ -80,50 +144,46 @@ def _compute_all_imports(file_info):
     return imports
 
 
-def _determine_imports(symbol, file_info):
-    """Returns info about the names by which the symbol goes in this file.
+def _determine_localnames(fullname, file_info):
+    """Return info about the localnames by which `fullname` goes in this file.
 
-    Returns a set of SymbolImport namedtuples.
+    Returns a set of LocalName namedtuples.
+
+    It might seem like this set should always have size 1, but there
+    are several cases it might have more:
+    1) If you do 'import foo.bar' and 'import foo.baz', then
+       'foo.bar.myfunc' is actually provided through *both*
+       imports (a quirk of python), leading to two elements
+       in the set.  We only care about the first element,
+       of course.
+    2) If you do 'import foo.bar' and 'from foo import bar',
+       then 'foo.bar.myfunc' is provided through both imports.
+       I hope you don't do that.
+    3) If you do '   import foo.bar' several times in several
+       functions (several "late imports") you'll get one
+       return-value per late-import that you do.
     """
     imports = set()
-    symbol_parts = symbol.split('.')
     for imp in _compute_all_imports(file_info):
-        imported_parts = imp.name.split('.')
-        if imp.alias == imp.name:
-            if imported_parts[0] == symbol_parts[0]:
-                imports.add(SymbolImport(imp, symbol, symbol))
-        else:
-            nparts = len(imported_parts)
-            # If we imported the symbol, or a less-specific prefix (e.g. its
-            # module, or a parent of that)
-            if symbol_parts[:nparts] == imported_parts:
-                symbol_alias = '.'.join(
-                    [imp.alias] + symbol_parts[nparts:])
-                imports.add(SymbolImport(imp, symbol, symbol_alias))
+        if imp.alias == imp.name:      # no aliases: no 'as' or 'from'
+            # This deals with the python quirk in case (1) of the
+            # docstring: 'import foo.anything' gives you access
+            # to foo.bar.myfunc.
+            imported_firstpart = imp.name.split('.', 1)[0]
+            fullname_firstpart = fullname.split('.', 1)[0]
+            if imported_firstpart == fullname_firstpart:
+                imports.add(LocalName(fullname, fullname, imp))
+        else:                          # alias: need to replace name with alias
+            if _dotted_starts_with(fullname, imp.name):
+                localname = '%s%s' % (imp.alias, fullname[len(imp.name):])
+                imports.add(LocalName(fullname, localname, imp))
     return imports
-
-
-def _dotted_starts_with(string, prefix):
-    """Like string.startswith(prefix), but in the dotted sense.
-
-    That is, abc is a prefix of abc.de but not abcde.ghi.
-    """
-    return prefix == string or string.startswith('%s.' % prefix)
-
-
-def _dotted_prefixes(string):
-    """All prefixes of string, in the dotted sense.
-
-    That is, all strings p such that _dotted_starts_with(string, p), in order
-    from shortest to longest.
-    """
-    string_parts = string.split('.')
-    for i in xrange(len(string_parts)):
-        yield '.'.join(string_parts[:i + 1])
 
 
 def _name_for_node(node):
     """Return the dotted name of an AST node, if there's a reasonable one.
+
+    A 'name' is just a dotted-symbol, e.g. `myvar` or `myvar.mystruct.myprop`.
 
     This only does anything interesting for Name and Attribute, and for
     Attribute only if it's like a.b.c, not (a + b).c.
@@ -137,7 +197,9 @@ def _name_for_node(node):
 
 
 def _all_names(root):
-    """Returns all names in the file.
+    """All names in the file.
+
+    A 'name' is just a dotted-symbol, e.g. `myvar` or `myvar.mystruct.myprop`.
 
     Does not include imports or string references or anything else funky like
     that, and only returns the "biggest" possible name -- if you reference
@@ -155,13 +217,13 @@ def _all_names(root):
 
 
 def _names_starting_with(prefix, file_info):
-    """Returns all dotted names in the file beginning with 'prefix'.
+    """Returns all dotted names in the given file beginning with 'prefix'.
 
     Does not include imports or string references or anything else funky like
     that.  "Beginning with prefix" in the dotted sense (see
     _dotted_starts_with).
 
-    Returns a dict of name -> list of nodes.
+    Returns a dict of name -> list of AST nodes.
     """
     retval = {}
     for name, node in _all_names(file_info.tree):
@@ -173,7 +235,13 @@ def _names_starting_with(prefix, file_info):
 def _check_import_conflicts(file_info, added_name, is_alias):
     """Return any imports that will conflict with ours.
 
-    added_name should be the name of the import, not the symbol.
+    Suppose our file says `from foo import bar as baz` and
+    we want to add `import baz` (or `import qux as baz`).
+    That's not going to work!  Similarly if our file has
+    `import baz.bang`.
+
+    added_name should be the alias of the import, not the symbol.
+
     Returns a list of import objects.
 
     TODO(benkraft): If that's due to our alias, we could avoid using
@@ -182,61 +250,108 @@ def _check_import_conflicts(file_info, added_name, is_alias):
     collide.
     """
     imports = _compute_all_imports(file_info)
+    # TODO(csilvers): perhaps a more self-evident way to code this would
+    # be: complain if there is any shared prefix between added_import.alias
+    # and some_existing_import.alias.
     if is_alias:
         # If we are importing with an alias, we're looking for existing
         # imports with whose prefix we collide.
+        # e.g. we're adding 'import foo.bar as baz' or 'from foo import baz'
+        # and the existing code has 'import baz' or 'import baz.bang' or
+        # 'from qux import baz' or 'import quux as baz'.
         return {imp for imp in imports
                 if _dotted_starts_with(imp.alias, added_name)}
     else:
         # If we aren't importing with an alias, we're looking for
         # existing imports who are a prefix of us.
+        # e.g. we are adding 'import foo' or 'import foo.bar' and the
+        # existing code has 'import baz as foo' or 'from baz import foo'.
+        # TODO(csilvers): this is actually ok in the case we're going
+        # to remove the 'import baz as foo'/'from baz import foo' because
+        # the only client of that import is the symbol that we're moving.
         return {imp for imp in imports
                 if _dotted_starts_with(added_name, imp.alias)}
 
 
-def _imports_to_remove(old_imports, new_name, patched_aliases, file_info):
+def _imports_to_remove(localnames_for_old_fullname, new_localname,
+                       patched_localnames, file_info):
     """Decide what imports we can remove.
 
     Arguments:
-        old_imports: set of SymbolImports
-        new_name: the name to which we moved the symbol
-        patched_aliases: the set of SymbolImports whose references we
-        potentially patched
-        file_info: the File object
+        localnames_for_old_fullname: set of LocalNames that reflect
+           how old_fullname -- the pre-move fullname of the symbol
+           that we're moving -- is potentially referred to in the
+           given file.  (Usually this set will have size 1, but see
+           docstring for _determine_localnames().)
+        new_localname: the post-move localname of the symbol that we're
+           moving.
+        patched_localnames: the set of localnames whose references we
+           patched.  These are the localnames that *actually* occurred
+           in this file.  This is a subset of localnames_for_old_fullname,
+           which holds those localnames which could legally occur in
+           the file but may not.  (More precisely, it's a subset of
+           {ln.localname for ln in localnames_for_old_fullname}.)
+        file_info: the File object.
 
-    returns: (set of imports we can remove,
-              set of imports that may be used implicitly)
+    Returns (set of imports we can remove,
+             set of imports that may be used implicitly).
+
+    "set of imports that may be used implicitly" is when we do
+    "import foo.bar" and access "foo.baz.myfunc()", which is legal
+    but weird python.
     """
     # Decide whether to keep the old import if we changed references to it.
     removable_imports = set()
     maybe_removable_imports = set()
     definitely_kept_imports = set()
-    for imp in old_imports:
-        if new_name == imp.alias:
-            # If one of the old imports is for the same alias, it had
-            # better be removable!  (We've already checked for conflicts.)
-            removable_imports.add(imp.imp)
-        elif imp.alias in patched_aliases:
-            # Anything starting with the relevant prefix.
+    for (fullname, localname, imp) in localnames_for_old_fullname:
+        if new_localname == localname:
+            # This can happen if we're moving foo.myfunc to bar.myfunc
+            # and this file does 'import foo as bar; bar.myfunc()'.
+            # In that case the localname is unchanged (it's bar.myfunc
+            # both before and after the move) and all we need to do is
+            # change the import line by removing the old import and
+            # adding the new one.  (We only do the removing here.)
+            removable_imports.add(imp)
+        elif localname in patched_localnames:
+            # This means that this localname is actually used in our
+            # file.  We need to check if there are any other names in
+            # this file that depend on `imp`.  e.g. we are moving
+            # foo.myfunc to bar.myfunc, and our current file has
+            # 'x = foo.myfunc()'.  Our question is, does it also have
+            # code like 'y = foo.myotherfunc()'?  If so, we can't
+            # remove the 'import foo' since it has this other client.
+            # Otherwise we can since *all* uses of foo are changing to
+            # be uses of bar.
+
+            # This includes all names that we might be *implicitly*
+            # accessing via this import, due to the python quirk
+            # around 'import foo.bar; foo.baz.myfunc()' working.
             relevant_names = set(_names_starting_with(
-                imp.imp.alias.split('.')[0], file_info))
-            handled_names = {
-                name for name in relevant_names
-                if _dotted_starts_with(name, imp.alias)}
+                imp.alias.split('.', 1)[0], file_info))
+            # This is only those names that we are explicitly accessing
+            # via this import, i.e. not depending on the quirk.
             explicit_names = {
                 name for name in relevant_names
-                if _dotted_starts_with(name, imp.imp.alias)}
+                if _dotted_starts_with(name, imp.alias)}
+            handled_names = {
+                name for name in relevant_names
+                if _dotted_starts_with(name, localname)}
 
-            # If we reference this import, other than for the moved symbol, we
-            # may need to keep it.
             if explicit_names - handled_names:
-                definitely_kept_imports.add(imp.imp)
+                # If we make use of this import, other than for the
+                # moved symbol, we need to keep it.
+                definitely_kept_imports.add(imp)
             elif relevant_names - handled_names:
-                maybe_removable_imports.add(imp.imp)
+                # If we make use of this import but only implicitly
+                # (via the quirk), we may be able to remove it or we
+                # may not, depending on whether anyone else implicitly
+                # (or explicitly) provides the same symbol.
+                maybe_removable_imports.add(imp)
             else:
-                removable_imports.add(imp.imp)
+                removable_imports.add(imp)
         else:
-            definitely_kept_imports.add(imp.imp)
+            definitely_kept_imports.add(imp)
 
     # Now, if there was an import we were considering removing, and we are
     # keeping a different import that gets us the same things, we can
@@ -249,7 +364,7 @@ def _imports_to_remove(old_imports, new_name, patched_aliases, file_info):
                 removable_imports.add(maybe_removable_imp)
                 break
 
-    return removable_imports, maybe_removable_imports
+    return (removable_imports, maybe_removable_imports)
 
 
 def _get_import_area(imp, file_info):
@@ -286,10 +401,14 @@ def _get_import_area(imp, file_info):
 def _replace_in_string(str_tokens, regex, replacement, body):
     """Given a list of tokens representing a string, do a regex-replace.
 
-    This is a bit tricky for a few reasons.  First, there may be multiple
-    tokens, with different delimiters, and spaces in between.  Second, there
-    may be escape sequences; we don't support those in the regex itself but we
-    do want to be able to replace correctly if they're elsewhere in the string.
+    This is a bit tricky for a few reasons.  First, there may be
+    multiple tokens that make up the string, with different
+    delimiters, and spaces in between: `"I'm happy"\n'you liked it'`.
+    Second, there may be escape sequences, which are annoying because
+    the length of the symbol in the code (`\x2f`) is different than
+    the length of the character in the string (`/`).  (While we don't
+    support escape sequences in the regex itself we do want to be
+    able to replace correctly if they're elsewhere in the string.)
 
     Arguments:
         str_tokens: a list of tokens corresponding to an ast.Str node
@@ -314,51 +433,69 @@ def _replace_in_string(str_tokens, regex, replacement, body):
     # care (e.g. that identifiers are all ASCII)
     joined_unparsed_str = ''.join(tokens_less_delims)
     for match in regex.finditer(joined_unparsed_str):
-        rel_start, rel_end = match.span()
-        # Sets up start_index to the index of the token in which the first
-        # character of the match is found, and rel_start to the character-index
-        # relative to that token (not counting its delimters), and the same for
-        # end_index/rel_end.
-        # Note 0 <= rel_start < len(tokens_less_delims[start_index])
-        # and 0 < rel_end <= len(tokens_less_delims[end_index]).
+        abs_start, abs_end = match.span()
+
+        # Now convert the start and end of the match from an absolute
+        # position in the string to a (token, pos-in-token) pair.
+        start_within_token, end_within_token = abs_start, abs_end
+
+        # Note:
+        # 0 <= start_within_token < len(tokens_less_delims[start_token_index])
+        # and 0 < end_within_token <= len(tokens_less_delims[end_token_index])
         # TODO(benkraft): DRY a bit.
         for i, tok in enumerate(tokens_less_delims):
-            if rel_start < len(tok):
-                start_index = i
+            if start_within_token < len(tok):
+                start_token_index = i
                 break
             else:
-                rel_start -= len(tok)
+                start_within_token -= len(tok)
         for i, tok in enumerate(tokens_less_delims):
-            if rel_end <= len(tok):
-                end_index = i
+            if end_within_token <= len(tok):
+                end_token_index = i
                 break
             else:
-                rel_end -= len(tok)
+                end_within_token -= len(tok)
 
         # Figure out what changes to actually make, based on the tokens we
         # have.
-        start = (str_tokens[start_index].startpos + rel_start +
-                 len(delims[start_index]))
-        end = (str_tokens[end_index].startpos + rel_end +
-               len(delims[end_index]))
-        if delims[start_index] == delims[end_index]:
-            # We merge the relevant tokens -- user can rewrap lines if needed.
+        deletion_start = (str_tokens[start_token_index].startpos +
+                          len(delims[start_token_index]) + start_within_token)
+        deletion_end = (str_tokens[end_token_index].startpos +
+                        len(delims[end_token_index]) + end_within_token)
+
+        # We're going to remove part (or possibly all) of start_token,
+        # part (or possibly all) of end_token, and all the tokens in
+        # between.  We need to combine what's left of start_token and
+        # end_token into a single token.  That's annoying in the case
+        # the two tokens use different delimiters (' vs ", say).
+        # Though it's easy in the case we're deleting all of start_token
+        # or all of end_token.
+
+        if delims[start_token_index] == delims[end_token_index]:
+            # Delimiters match, so we can just use the start-delimiter
+            # from start_token and the end-delimiter from end_token.
             pass
-        elif rel_start == 0:
-            # We can just get rid of the start token, and merge into the end.
-            start = str_tokens[start_index].startpos
-            replacement = delims[end_index] + replacement
-        elif rel_end == len(tokens_less_delims[end_index]):
-            # We can just get rid of the end token, and merge into the start.
-            end = str_tokens[end_index].endpos
-            replacement = replacement + delims[start_index]
+        elif start_within_token == 0:
+            # In this case, deletion_start would cause us to just keep
+            # the start-delimiter from start_token, and delete the
+            # rest.  Let's go all the way and delete *all* of
+            # start-token, and add the start-delimiter back in to the
+            # replacement text instead.  That way we can use the right
+            # delimiter to match end_token's delimiter.
+            deletion_start = str_tokens[start_token_index].startpos
+            replacement = delims[end_token_index] + replacement
+        elif end_within_token == len(tokens_less_delims[end_token_index]):
+            # Same as above, except vice-versa.
+            deletion_end = str_tokens[end_token_index].endpos
+            replacement = replacement + delims[start_token_index]
         else:
             # We have to keep both tokens around, fixing delimiters and adding
             # space in between; likely the user will rewrap lines anyway.
-            replacement = (delims[start_index] + ' ' + delims[end_index] +
-                           replacement)
-        yield khodemod.Patch(
-            body[start:end], replacement, start, end)
+            replacement = (
+                delims[start_token_index] + ' ' + delims[end_token_index] +
+                replacement)
+        yield khodemod.Patch(body[deletion_start:deletion_end], replacement,
+                             deletion_start, deletion_end)
 
 
 class File(object):
@@ -373,10 +510,27 @@ class File(object):
         self.tokens = asttokens.ASTTokens(body, tree=self.tree)
 
 
-def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
-    """The main suggestor to fix all references to a file."""
+def fix_uses_suggestor(old_fullname, new_fullname,
+                       name_to_import, import_alias=None):
+    """The main suggestor to fix all references to a file.
+
+    Arguments:
+        old_fullname: the pre-move fullname (module when moving a module,
+            module.symbol when moving a symbol) that we're moving.
+        new_fullname: the post-move fullname (module when moving a module,
+            module.symbol when moving a symbol) that we're moving.
+        name_to_import: the module or module.symbol we want to add to
+            provide access to new_fullname.  (KA style is to disallow
+            importing symbols explicitly, so it would always be the module
+            for KA code.)  If you are moving a module, name_to_import should
+            probably be the same as new_fullname (though it could technically
+            be a prefix of new_fullname).
+        import_alias: what to call the import.  Logically, we will suggest
+            adding "import name_to_import as import_alias" though we may
+            use "from" syntax if it amounts to the same thing.  If None,
+            we'll just use "import name_to_import".
+    """
     def suggestor(filename, body):
-        # TODO(benkraft): This is super ginormous by now, break it up.
         try:
             file_info = File(filename, body)
         except Exception as e:
@@ -385,51 +539,57 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
         # PART THE FIRST:
         #    Set things up, do some simple checks, decide whether to operate.
 
-        assert _dotted_starts_with(new_name, name_to_import), (
+        assert _dotted_starts_with(new_fullname, name_to_import), (
             "%s isn't a valid name to import -- not a prefix of %s" % (
-                name_to_import, new_name))
+                name_to_import, new_fullname))
 
-        old_imports = _determine_imports(old_name, file_info)
-        old_aliases = {imp.alias for imp in old_imports}
+        old_localnames = _determine_localnames(old_fullname, file_info)
+        old_localname_strings = {ln.localname for ln in old_localnames}
 
-        existing_new_imports = {
-            imp.alias for imp
-            in _determine_imports(new_name, file_info)
-            if name_to_import == imp.imp.name}
+        # If name_to_import is already imported in this file, figure
+        # out what the localname for our symbol would be using this
+        # existing import.  That is, if we are moving 'foo.myfunc' to
+        # 'bar.myfunc' and this file already has 'import bar as baz'
+        # then existing_new_localnames would be {'baz.myfunc'}.
+        existing_new_localnames = {
+            ln.localname
+            for ln in _determine_localnames(new_fullname, file_info)
+            if name_to_import == ln.imp.name
+        }
 
-        # If for some reason there are multiple existing aliases
-        # (unlikely), choose the shortest one, to save us line-wrapping.
-        # Prefer an existing explicit import to the caller-provided alias.
-        # TODO(benkraft): this might not be totally safe if the existing
-        # import isn't toplevel, but probably it will be.
-        if existing_new_imports:
-            final_new_name = max(existing_new_imports, key=len)
-        elif use_alias:
-            final_new_name = use_alias + new_name[len(name_to_import):]
+        if existing_new_localnames:
+            # If for some reason there are multiple existing localnames
+            # (unlikely), choose the shortest one, to save us line-wrapping.
+            # Prefer an existing explicit import to the caller-provided alias.
+            # TODO(benkraft): this might not be totally safe if the existing
+            # import isn't toplevel, but probably it will be.
+            new_localname = min(existing_new_localnames, key=len)
+        elif import_alias:
+            new_localname = import_alias + new_fullname[len(name_to_import):]
         else:
-            final_new_name = new_name
+            new_localname = new_fullname
 
-        if not existing_new_imports:
-            dupe_imports = _check_import_conflicts(
-                file_info, use_alias or name_to_import, bool(use_alias))
-            if dupe_imports:
+        if not existing_new_localnames:
+            conflicting_imports = _check_import_conflicts(
+                file_info, import_alias or name_to_import, bool(import_alias))
+            if conflicting_imports:
                 raise khodemod.FatalError(
-                    dupe_imports.pop().start,
+                    conflicting_imports.pop().start,
                     "Your alias will conflict with imports in this file.")
 
         # PART THE SECOND:
         #    Patch references to the symbol inline -- everything but imports.
 
         # First, fix up normal references in code.
-        patched_aliases = set()
-        for imp in old_aliases - {final_new_name}:
-            for name, nodes in _names_starting_with(
-                    imp, file_info).iteritems():
-                for node in nodes:
+        patched_localnames = set()
+        for localname in old_localname_strings - {new_localname}:
+            for (name, ast_nodes) in (
+                    _names_starting_with(localname, file_info).iteritems()):
+                for node in ast_nodes:
                     start, end = file_info.tokens.get_text_range(node)
-                    patched_aliases.add(imp)
+                    patched_localnames.add(localname)
                     yield khodemod.Patch(
-                        body[start:end], final_new_name + name[len(imp):],
+                        body[start:end], new_localname + name[len(localname):],
                         start, end)
 
         # Fix up references in strings and comments.  We look for both the
@@ -438,16 +598,15 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
         # fully-qualified references with fully-qualified references;
         # references to aliases get replaced with whatever we're using for the
         # rest of the file.
-        regexes_to_check = [(_re_for_name(old_name), new_name)]
-        for imp in old_aliases - {final_new_name, old_name}:
-            regexes_to_check.append((_re_for_name(imp), final_new_name))
-        if new_name == name_to_import:
-            # We are moving a module, also check for the filename.
-            # TODO(benkraft): Not strictly true; we could be importing a
-            # symbol.  But KA doesn't do that.
-            regexes_to_check.append((
-                re.compile(re.escape(_filename_for_module_name(old_name))),
-                _filename_for_module_name(new_name)))
+        regexes_to_check = [(_re_for_name(old_fullname), new_fullname)]
+        for localname in old_localname_strings - {new_localname, old_fullname}:
+            regexes_to_check.append((_re_for_name(localname), new_localname))
+        # Also check for the fullname being represented as a file.
+        # In cases where the fullname is not a module (but is instead
+        # module.symbol) this will typically be a noop.
+        regexes_to_check.append((
+            re.compile(re.escape(_filename_for_module_name(old_fullname))),
+            _filename_for_module_name(new_fullname)))
 
         # Strings
         for node in ast.walk(file_info.tree):
@@ -470,25 +629,24 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
                     for match in regex.finditer(token.string):
                         yield khodemod.Patch(
                             match.group(0), replacement,
-                            match.start() + token.startpos,
-                            match.end() + token.startpos)
+                            token.startpos + match.start(),
+                            token.startpos + match.end())
 
         # PART THE THIRD:
         #    Add/remove imports, if necessary.
 
-        # TODO(benkraft): I think we do extra work here if we don't change the
-        # alias but also don't have any references.
-        if not patched_aliases and final_new_name not in old_aliases:
+        if (not patched_localnames and
+                # This protects against the case where the use didn't change
+                # but the import needs to, e.g. when moving foo.myfunc to
+                # bar.myfunc and our file used to have 'import foo as bar'.
+                # TODO(benkraft): I think we do extra work here if we don't
+                # change the alias but also don't have any references.
+                new_localname not in old_localname_strings):
             # We didn't change anything that would require fixing imports.
             return
 
         removable_imports, maybe_removable_imports = _imports_to_remove(
-            old_imports, final_new_name, patched_aliases, file_info)
-
-        if (existing_new_imports and not removable_imports and
-                not maybe_removable_imports):
-            # We made changes, but still don't need to fix any imports.
-            return
+            old_localnames, new_localname, patched_localnames, file_info)
 
         for imp in maybe_removable_imports:
             yield khodemod.WarningInfo(
@@ -506,7 +664,8 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
                 yield khodemod.WarningInfo(
                     imp.start, "Not removing import with @Nolint.")
             elif ',' in body[imp.start:imp.end]:
-                # TODO(benkraft): How should this consider internal comments?
+                # TODO(benkraft): better would be to check for `,` in each
+                # token so we don't match commas in internal comments.
                 yield khodemod.WarningInfo(
                     imp.start, "I don't know how to edit this import.")
             else:
@@ -514,28 +673,35 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
                 yield khodemod.Patch(body[start:end], '', start, end)
 
         # Add a new import, if necessary.
-        if not existing_new_imports:
+        if not existing_new_localnames:
             # Decide what the import will say.
-            if '.' in name_to_import and use_alias:
+            # TODO(csilvers): properly handle the case that
+            # name_to_import is "module.symbol" and import_alias is not None.
+            if '.' in name_to_import and import_alias:
                 base, suffix = name_to_import.rsplit('.', 1)
-                if use_alias == suffix:
+                if import_alias == suffix:
                     import_stmt = 'from %s import %s' % (base, suffix)
                 else:
                     import_stmt = 'import %s as %s' % (
-                        name_to_import, use_alias)
+                        name_to_import, import_alias)
             else:
-                if use_alias and use_alias != name_to_import:
+                if import_alias and import_alias != name_to_import:
                     import_stmt = 'import %s as %s' % (
-                        name_to_import, use_alias)
+                        name_to_import, import_alias)
                 else:
                     import_stmt = 'import %s' % name_to_import
 
-            # Decide where to add it.
-            explicit_imports = {imp for imp in old_imports
-                                # TODO(benkraft): This is too weak -- we should
-                                # only call an import explicit if it is of the
-                                # symbol's module.
-                                if _dotted_starts_with(old_name, imp.imp.name)}
+            # Decide where to add it.  The issue here is that we may
+            # be replacing a "late import" (an import inside a
+            # function) in which case we want the new import to be
+            # inside the same function at the same place.  In fact, we
+            # might be late-importing the same module in *several*
+            # functions, and each one has to get replaced properly.
+            explicit_imports = {
+                ln.imp for ln in old_localnames
+                # TODO(benkraft): This is too weak -- we should only
+                # call an import explicit if it is of the symbol's module.
+                if _dotted_starts_with(old_fullname, ln.imp.name)}
 
             if explicit_imports:
                 # If there previously existed an explicit import, we add at the
@@ -548,19 +714,22 @@ def the_suggestor(old_name, new_name, name_to_import, use_alias=None):
                 add_at = explicit_imports
             else:
                 # If not, we add at the first implicit import only.
-                add_at = next(sorted(old_imports,
-                                     key=lambda imp: imp.imp.start))
+                # TODO(csilvers): add a test for this case.
+                first_implicit_localname = next(
+                    sorted(old_localnames, key=lambda ln: ln.imp.start))
+                add_at = {first_implicit_localname.imp}
 
             for imp in add_at:
-                # Copy the old import's context.
+                # Copy the old import's context, such as opening indent
+                # and trailing newline.
                 # TODO(benkraft): If the context we copy is a comment, and we
                 # are keeping the old import, maybe don't copy it?
-                start, end = _get_import_area(imp.imp, file_info)
-                text_to_add = ''.join(
-                    [body[start:imp.imp.start],
-                     import_stmt,
-                     body[imp.imp.end:end]])
-
+                start, end = _get_import_area(imp, file_info)
+                pre_context = body[start:imp.start]
+                post_context = body[imp.end:end]
+                # Now we can add the new import and have the same context
+                # as the import we are taking the place of!
+                text_to_add = ''.join([pre_context, import_stmt, post_context])
                 yield khodemod.Patch('', text_to_add, start, start)
 
     return suggestor
@@ -596,9 +765,10 @@ def import_sort_suggestor(filename, body):
 def main():
     # TODO(benkraft): Allow moving multiple symbols (from/to the same modules)
     # at once.
+    # TODO(csilvers): allow moving multiple files into a single directory too.
     parser = argparse.ArgumentParser()
-    parser.add_argument('old_name')
-    parser.add_argument('new_name')
+    parser.add_argument('old_fullname')
+    parser.add_argument('new_fullname')
     parser.add_argument('-s', '--symbol', action='store_true',
                         help=('Treat moved name as an individual symbol, '
                               'rather than a whole module.'))
@@ -613,21 +783,28 @@ def main():
     # TODO(benkraft): Allow specifying explicitly what to import, so we can
     # import a symbol (although KA never wants to do that).
     if parsed_args.symbol:
-        name_to_import, _ = parsed_args.new_name.rsplit('.', 1)
+        name_to_import, _ = parsed_args.new_fullname.rsplit('.', 1)
     else:
-        name_to_import = parsed_args.new_name
-    suggestor = the_suggestor(parsed_args.old_name, parsed_args.new_name,
-                              name_to_import, use_alias=parsed_args.alias)
+        name_to_import = parsed_args.new_fullname
+
+    suggestor = fix_uses_suggestor(
+        parsed_args.old_fullname, parsed_args.new_fullname,
+        name_to_import, import_alias=parsed_args.alias)
+
     # TODO(benkraft): Support other khodemod frontends.
     frontend = khodemod.AcceptingFrontend(verbose=parsed_args.verbose)
-    if parsed_args.verbose:
-        print "===== Updating references ====="
+
+    def log(msg):
+        if parsed_args.verbose:
+            print msg
+
+    log("===== Updating references =====")
     frontend.run_suggestor(suggestor)
-    if parsed_args.verbose:
-        print "====== Resorting imports ======"
+
+    log("====== Resorting imports ======")
     frontend.run_suggestor_on_modified_files(import_sort_suggestor)
-    if parsed_args.verbose:
-        print "======== Move complete! ======="
+
+    log("======== Move complete! =======")
 
 
 if __name__ == '__main__':

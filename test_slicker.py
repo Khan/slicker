@@ -6,191 +6,191 @@ import khodemod
 import slicker
 
 
-class DetermineImportsTest(unittest.TestCase):
-    def _assert_imports(self, actual, expected):
+class DetermineLocalnamesTest(unittest.TestCase):
+    def _assert_localnames(self, actual, expected):
         """Assert imports match the given tuples, but with certain changes."""
         modified_actual = set()
         for imp in actual:
-            self.assertIsInstance(imp, slicker.SymbolImport)
-            self.assertIsInstance(imp[0], slicker.Import)
-            (name, alias, start, end, node), symbol, symbol_alias = imp
+            self.assertIsInstance(imp, slicker.LocalName)
+            self.assertIsInstance(imp[2], slicker.Import)
+            fullname, localname, (name, alias, start, end, node) = imp
             self.assertIsInstance(node, (ast.Import, ast.ImportFrom))
             modified_actual.add(
-                ((name, alias, start, end), symbol, symbol_alias))
+                (fullname, localname, (name, alias, start, end)))
         self.assertEqual(modified_actual, expected)
 
     # TODO(benkraft): Move some of this to a separate ComputeAllImportsTest.
     def test_simple(self):
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo', slicker.File(None, 'import foo\n')),
-            {(('foo', 'foo', 0, 10), 'foo', 'foo')})
+            {('foo', 'foo', ('foo', 'foo', 0, 10))})
 
     def test_with_dots(self):
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz', slicker.File(None, 'import foo.bar.baz\n')),
-            {(('foo.bar.baz', 'foo.bar.baz', 0, 18),
-              'foo.bar.baz', 'foo.bar.baz')})
+            {('foo.bar.baz', 'foo.bar.baz',
+              ('foo.bar.baz', 'foo.bar.baz', 0, 18))})
 
     def test_from_import(self):
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(None, 'from foo.bar import baz\n')),
-            {(('foo.bar.baz', 'baz', 0, 23), 'foo.bar.baz', 'baz')})
+            {('foo.bar.baz', 'baz', ('foo.bar.baz', 'baz', 0, 23))})
 
     def test_implicit_import(self):
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz', slicker.File(None, 'import foo\n')),
-            {(('foo', 'foo', 0, 10), 'foo.bar.baz', 'foo.bar.baz')})
-        self._assert_imports(
-            slicker._determine_imports(
+            {('foo.bar.baz', 'foo.bar.baz', ('foo', 'foo', 0, 10))})
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz', slicker.File(None, 'import foo.quux\n')),
-            {(('foo.quux', 'foo.quux', 0, 15), 'foo.bar.baz', 'foo.bar.baz')})
-        self._assert_imports(
-            slicker._determine_imports(
+            {('foo.bar.baz', 'foo.bar.baz', ('foo.quux', 'foo.quux', 0, 15))})
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz', slicker.File(None, 'import foo.bar\n')),
-            {(('foo.bar', 'foo.bar', 0, 14), 'foo.bar.baz', 'foo.bar.baz')})
-        self._assert_imports(
-            slicker._determine_imports(
+            {('foo.bar.baz', 'foo.bar.baz', ('foo.bar', 'foo.bar', 0, 14))})
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz', slicker.File(None, 'import foo.bar.quux\n')),
-            {(('foo.bar.quux', 'foo.bar.quux', 0, 19),
-              'foo.bar.baz', 'foo.bar.baz')})
-        self._assert_imports(
-            slicker._determine_imports(
+            {('foo.bar.baz', 'foo.bar.baz',
+              ('foo.bar.quux', 'foo.bar.quux', 0, 19))})
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(None, 'import foo.bar.baz.quux\n')),
-            {(('foo.bar.baz.quux', 'foo.bar.baz.quux', 0, 23),
-              'foo.bar.baz', 'foo.bar.baz')})
+            {('foo.bar.baz', 'foo.bar.baz',
+              ('foo.bar.baz.quux', 'foo.bar.baz.quux', 0, 23))})
 
     def test_implicit_from_import(self):
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(None, 'from foo.bar import quux\n')),
             set())
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz', slicker.File(None, 'from foo import bar\n')),
-            {(('foo.bar', 'bar', 0, 19), 'foo.bar.baz', 'bar.baz')})
+            {('foo.bar.baz', 'bar.baz', ('foo.bar', 'bar', 0, 19))})
 
     def test_as_import(self):
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo', slicker.File(None, 'import foo as bar\n')),
-            {(('foo', 'bar', 0, 17), 'foo', 'bar')})
-        self._assert_imports(
-            slicker._determine_imports(
+            {('foo', 'bar', ('foo', 'bar', 0, 17))})
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(None, 'import foo.bar.baz as quux\n')),
-            {(('foo.bar.baz', 'quux', 0, 26), 'foo.bar.baz', 'quux')})
-        self._assert_imports(
-            slicker._determine_imports(
+            {('foo.bar.baz', 'quux', ('foo.bar.baz', 'quux', 0, 26))})
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(None, 'from foo.bar import baz as quux\n')),
-            {(('foo.bar.baz', 'quux', 0, 31), 'foo.bar.baz', 'quux')})
+            {('foo.bar.baz', 'quux', ('foo.bar.baz', 'quux', 0, 31))})
 
     def test_implicit_as_import(self):
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(None, 'import foo as quux\n')),
-            {(('foo', 'quux', 0, 18), 'foo.bar.baz', 'quux.bar.baz')})
-        self._assert_imports(
-            slicker._determine_imports(
+            {('foo.bar.baz', 'quux.bar.baz', ('foo', 'quux', 0, 18))})
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(None, 'import foo.bar as quux\n')),
-            {(('foo.bar', 'quux', 0, 22), 'foo.bar.baz', 'quux.baz')})
-        self._assert_imports(
-            slicker._determine_imports(
+            {('foo.bar.baz', 'quux.baz', ('foo.bar', 'quux', 0, 22))})
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(None, 'import foo.bar.quux as bogus\n')),
             set())
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(None, 'from foo import bar as quux\n')),
-            {(('foo.bar', 'quux', 0, 27), 'foo.bar.baz', 'quux.baz')})
-        self._assert_imports(
-            slicker._determine_imports(
+            {('foo.bar.baz', 'quux.baz', ('foo.bar', 'quux', 0, 27))})
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(None, 'from foo.bar import quux as bogus\n')),
             set())
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(None, 'import foo.bar.baz.quux as bogus\n')),
             set())
 
     def test_other_imports(self):
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo', slicker.File(None, 'import bogus\n')),
             set())
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(None, 'import bogus.foo.bar.baz\n')),
             set())
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo', slicker.File(None, 'from bogus import foo\n')),
             set())
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz', slicker.File(None, 'from bogus import foo\n')),
             set())
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(None, 'from bogus import foo, bar\n')),
             set())
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(None, 'from foo.bogus import bar, baz\n')),
             set())
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz', slicker.File(None, 'import bar, baz\n')),
             set())
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(None, 'import bar as foo, baz as quux\n')),
             set())
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo',
                 slicker.File(None, 'import bogus  # (with a comment)\n')),
             set())
 
     def test_other_junk(self):
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo', slicker.File(None, '# import foo\n')),
             set())
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo',
                 slicker.File(None, '                  # import foo\n')),
             set())
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo', slicker.File(None, 'def foo(): pass\n')),
             set())
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo',
                 slicker.File(None,
                              '"""imports are "fun" in a multiline string"""')),
             set())
 
     def test_with_context(self):
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo',
                 slicker.File(
                     None,
@@ -203,11 +203,11 @@ class DetermineImportsTest(unittest.TestCase):
                     '\n'
                     'def foo():\n'
                     '    return 1\n')),
-            {(('foo', 'foo', 55, 65), 'foo', 'foo')})
+            {('foo', 'foo', ('foo', 'foo', 55, 65))})
 
     def test_multiple_imports(self):
-        self._assert_imports(
-            slicker._determine_imports(
+        self._assert_localnames(
+            slicker._determine_localnames(
                 'foo.bar.baz',
                 slicker.File(
                     None,
@@ -215,11 +215,11 @@ class DetermineImportsTest(unittest.TestCase):
                     'import foo.bar.baz\n'
                     'from foo.bar import baz\n'
                     'import foo.quux\n')),
-            {(('foo', 'foo', 0, 10), 'foo.bar.baz', 'foo.bar.baz'),
-             (('foo.bar.baz', 'foo.bar.baz', 11, 29),
-              'foo.bar.baz', 'foo.bar.baz'),
-             (('foo.bar.baz', 'baz', 30, 53), 'foo.bar.baz', 'baz'),
-             (('foo.quux', 'foo.quux', 54, 69), 'foo.bar.baz', 'foo.bar.baz')})
+            {('foo.bar.baz', 'foo.bar.baz', ('foo', 'foo', 0, 10)),
+             ('foo.bar.baz', 'foo.bar.baz',
+              ('foo.bar.baz', 'foo.bar.baz', 11, 29)),
+             ('foo.bar.baz', 'baz', ('foo.bar.baz', 'baz', 30, 53)),
+             ('foo.bar.baz', 'foo.bar.baz', ('foo.quux', 'foo.quux', 54, 69))})
 
 
 class DottedPrefixTest(unittest.TestCase):
@@ -317,29 +317,30 @@ class FullFileTest(unittest.TestCase):
     def test_simple(self):
         self.run_test(
             'simple',
-            slicker.the_suggestor('foo.some_function', 'bar.new_name', 'bar'))
+            slicker.fix_uses_suggestor('foo.some_function',
+                                       'bar.new_name', 'bar'))
 
     def test_whole_file(self):
         self.run_test(
             'whole_file',
-            slicker.the_suggestor('foo', 'bar', 'bar'))
+            slicker.fix_uses_suggestor('foo', 'bar', 'bar'))
 
     def test_whole_file_alias(self):
         self.run_test(
             'whole_file_alias',
-            slicker.the_suggestor('foo', 'bar', 'bar', use_alias='baz'))
+            slicker.fix_uses_suggestor('foo', 'bar', 'bar', import_alias='baz'))
 
     def test_same_prefix(self):
         self.run_test(
             'same_prefix',
-            slicker.the_suggestor('foo.bar.some_function',
-                                  'foo.baz.some_function', 'foo.baz'))
+            slicker.fix_uses_suggestor('foo.bar.some_function',
+                                       'foo.baz.some_function', 'foo.baz'))
 
     def test_implicit(self):
         self.run_test(
             'implicit',
-            slicker.the_suggestor('foo.bar.baz.some_function',
-                                  'quux.new_name', 'quux'),
+            slicker.fix_uses_suggestor('foo.bar.baz.some_function',
+                                       'quux.new_name', 'quux'),
             expected_warnings=[
                 khodemod.WarningInfo(
                     pos=13, message='This import may be used implicitly.')])
@@ -347,8 +348,8 @@ class FullFileTest(unittest.TestCase):
     def test_double_implicit(self):
         self.run_test(
             'double_implicit',
-            slicker.the_suggestor('foo.bar.baz.some_function',
-                                  'quux.new_name', 'quux'))
+            slicker.fix_uses_suggestor('foo.bar.baz.some_function',
+                                       'quux.new_name', 'quux'))
 
     def test_slicker(self):
         """Test on (a perhaps out of date version of) slicker itself.
@@ -358,37 +359,39 @@ class FullFileTest(unittest.TestCase):
         """
         self.run_test(
             'slicker',
-            slicker.the_suggestor('codemod', 'codemod_fork', 'codemod_fork',
-                                  use_alias='the_other_codemod'))
+            slicker.fix_uses_suggestor('codemod',
+                                       'codemod_fork', 'codemod_fork',
+                                       import_alias='the_other_codemod'))
 
     def test_linebreaks(self):
         self.run_test(
             'linebreaks',
-            slicker.the_suggestor('foo.bar.baz.some_function',
-                                  'quux.new_name', 'quux'))
+            slicker.fix_uses_suggestor('foo.bar.baz.some_function',
+                                       'quux.new_name', 'quux'))
 
     def test_conflict(self):
         self.run_test(
             'conflict',
-            slicker.the_suggestor('foo.bar.interesting_function',
-                                  'bar.interesting_function', 'bar',
-                                  use_alias='foo'),
+            slicker.fix_uses_suggestor('foo.bar.interesting_function',
+                                       'bar.interesting_function', 'bar',
+                                       import_alias='foo'),
             expected_error=khodemod.FatalError(
                 0, 'Your alias will conflict with imports in this file.'))
 
     def test_conflict_2(self):
         self.run_test(
             'conflict_2',
-            slicker.the_suggestor('bar.interesting_function',
-                                  'foo.bar.interesting_function', 'foo.bar'),
+            slicker.fix_uses_suggestor('bar.interesting_function',
+                                       'foo.bar.interesting_function',
+                                       'foo.bar'),
             expected_error=khodemod.FatalError(
                 0, 'Your alias will conflict with imports in this file.'))
 
     def test_unused(self):
         self.run_test(
             'unused',
-            slicker.the_suggestor('foo.bar.some_function',
-                                  'quux.some_function', 'quux'),
+            slicker.fix_uses_suggestor('foo.bar.some_function',
+                                       'quux.some_function', 'quux'),
             expected_warnings=[
                 khodemod.WarningInfo(
                     pos=49, message='Not removing import with @Nolint.')])
@@ -396,29 +399,30 @@ class FullFileTest(unittest.TestCase):
     def test_many_imports(self):
         self.run_test(
             'many_imports',
-            slicker.the_suggestor('foo.quux.replaceme', 'baz.replaced', 'baz'))
+            slicker.fix_uses_suggestor('foo.quux.replaceme',
+                                       'baz.replaced', 'baz'))
 
     def test_late_import(self):
         self.run_test(
             'late_import',
-            slicker.the_suggestor('foo.bar.some_function',
-                                  'quux.some_function', 'quux'))
+            slicker.fix_uses_suggestor('foo.bar.some_function',
+                                       'quux.some_function', 'quux'))
 
     def test_mock(self):
         self.run_test(
             'mock',
-            slicker.the_suggestor('foo.bar.some_function',
-                                  'quux.some_function', 'quux'))
+            slicker.fix_uses_suggestor('foo.bar.some_function',
+                                       'quux.some_function', 'quux'))
 
     def test_comments(self):
         self.run_test(
             'comments',
-            slicker.the_suggestor('foo.bar.some_function',
-                                  'quux.mod.some_function', 'quux.mod',
-                                  use_alias='al'))
+            slicker.fix_uses_suggestor('foo.bar.some_function',
+                                       'quux.mod.some_function', 'quux.mod',
+                                       import_alias='al'))
 
     def test_comments_whole_file(self):
         self.run_test(
             'comments_whole_file',
-            slicker.the_suggestor('foo.bar', 'quux.mod', 'quux.mod',
-                                  use_alias='al'))
+            slicker.fix_uses_suggestor('foo.bar', 'quux.mod', 'quux.mod',
+                                       import_alias='al'))
