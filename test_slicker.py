@@ -343,7 +343,8 @@ class FullFileTest(unittest.TestCase):
                                        'quux.new_name', 'quux'),
             expected_warnings=[
                 khodemod.WarningInfo(
-                    pos=13, message='This import may be used implicitly.')])
+                    filename=khodemod.TestFrontend._FAKE_FILENAME, pos=13,
+                    message='This import may be used implicitly.')])
 
     def test_double_implicit(self):
         self.run_test(
@@ -376,7 +377,8 @@ class FullFileTest(unittest.TestCase):
                                        'bar.interesting_function', 'bar',
                                        import_alias='foo'),
             expected_error=khodemod.FatalError(
-                0, 'Your alias will conflict with imports in this file.'))
+                khodemod.TestFrontend._FAKE_FILENAME, 0,
+                'Your alias will conflict with imports in this file.'))
 
     def test_conflict_2(self):
         self.run_test(
@@ -385,7 +387,8 @@ class FullFileTest(unittest.TestCase):
                                        'foo.bar.interesting_function',
                                        'foo.bar'),
             expected_error=khodemod.FatalError(
-                0, 'Your alias will conflict with imports in this file.'))
+                khodemod.TestFrontend._FAKE_FILENAME, 0,
+                'Your alias will conflict with imports in this file.'))
 
     def test_unused(self):
         self.run_test(
@@ -394,7 +397,8 @@ class FullFileTest(unittest.TestCase):
                                        'quux.some_function', 'quux'),
             expected_warnings=[
                 khodemod.WarningInfo(
-                    pos=49, message='Not removing import with @Nolint.')])
+                    filename=khodemod.TestFrontend._FAKE_FILENAME, pos=49,
+                    message='Not removing import with @Nolint.')])
 
     def test_many_imports(self):
         self.run_test(

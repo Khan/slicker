@@ -398,7 +398,7 @@ def _get_import_area(imp, file_info):
     return (prev_tok.endpos if prev_tok else 0, last_tok.endpos)
 
 
-def _replace_in_string(str_tokens, regex, replacement, body):
+def _replace_in_string(str_tokens, regex, replacement, file_info):
     """Given a list of tokens representing a string, do a regex-replace.
 
     This is a bit tricky for a few reasons.  First, there may be
@@ -415,7 +415,7 @@ def _replace_in_string(str_tokens, regex, replacement, body):
         regex: a compiled regex object
         replacement: a string to replace with (note we do not support \1-style
             references)
-        body: the entire text of the file.
+        file_info: the file to do the replacements in.
 
     Returns: a generator of khodemod.Patch objects.
     """
@@ -494,8 +494,10 @@ def _replace_in_string(str_tokens, regex, replacement, body):
             replacement = (
                 delims[start_token_index] + ' ' + delims[end_token_index] +
                 replacement)
-        yield khodemod.Patch(body[deletion_start:deletion_end], replacement,
-                             deletion_start, deletion_end)
+        yield khodemod.Patch(
+            file_info.filename,
+            file_info.body[deletion_start:deletion_end], replacement,
+            deletion_start, deletion_end)
 
 
 class File(object):
@@ -534,7 +536,8 @@ def fix_uses_suggestor(old_fullname, new_fullname,
         try:
             file_info = File(filename, body)
         except Exception as e:
-            raise khodemod.FatalError(0, "Couldn't parse this file: %s" % e)
+            raise khodemod.FatalError(filename, 0,
+                                      "Couldn't parse this file: %s" % e)
 
         # PART THE FIRST:
         #    Set things up, do some simple checks, decide whether to operate.
@@ -574,7 +577,7 @@ def fix_uses_suggestor(old_fullname, new_fullname,
                 file_info, import_alias or name_to_import, bool(import_alias))
             if conflicting_imports:
                 raise khodemod.FatalError(
-                    conflicting_imports.pop().start,
+                    filename, conflicting_imports.pop().start,
                     "Your alias will conflict with imports in this file.")
 
         # PART THE SECOND:
@@ -589,6 +592,7 @@ def fix_uses_suggestor(old_fullname, new_fullname,
                     start, end = file_info.tokens.get_text_range(node)
                     patched_localnames.add(localname)
                     yield khodemod.Patch(
+                        filename,
                         body[start:end], new_localname + name[len(localname):],
                         start, end)
 
@@ -617,7 +621,7 @@ def fix_uses_suggestor(old_fullname, new_fullname,
                 for regex, replacement in regexes_to_check:
                     if regex.search(node.s):
                         for patch in _replace_in_string(
-                                str_tokens, regex, replacement, body):
+                                str_tokens, regex, replacement, file_info):
                             yield patch
 
         # Comments
@@ -628,6 +632,7 @@ def fix_uses_suggestor(old_fullname, new_fullname,
                     # of comments.
                     for match in regex.finditer(token.string):
                         yield khodemod.Patch(
+                            filename,
                             match.group(0), replacement,
                             token.startpos + match.start(),
                             token.startpos + match.end())
@@ -650,7 +655,7 @@ def fix_uses_suggestor(old_fullname, new_fullname,
 
         for imp in maybe_removable_imports:
             yield khodemod.WarningInfo(
-                imp.start, "This import may be used implicitly.")
+                filename, imp.start, "This import may be used implicitly.")
         for imp in removable_imports:
             toks = list(
                 file_info.tokens.get_tokens(imp.node, include_extra=False))
@@ -662,15 +667,16 @@ def fix_uses_suggestor(old_fullname, new_fullname,
                 # Don't touch nolinted imports; they may be there for a reason.
                 # TODO(benkraft): Handle this case for implicit imports as well
                 yield khodemod.WarningInfo(
-                    imp.start, "Not removing import with @Nolint.")
+                    filename, imp.start, "Not removing import with @Nolint.")
             elif ',' in body[imp.start:imp.end]:
                 # TODO(benkraft): better would be to check for `,` in each
                 # token so we don't match commas in internal comments.
                 yield khodemod.WarningInfo(
-                    imp.start, "I don't know how to edit this import.")
+                    filename, imp.start,
+                    "I don't know how to edit this import.")
             else:
                 start, end = _get_import_area(imp, file_info)
-                yield khodemod.Patch(body[start:end], '', start, end)
+                yield khodemod.Patch(filename, body[start:end], '', start, end)
 
         # Add a new import, if necessary.
         if not existing_new_localnames:
@@ -730,7 +736,7 @@ def fix_uses_suggestor(old_fullname, new_fullname,
                 # Now we can add the new import and have the same context
                 # as the import we are taking the place of!
                 text_to_add = ''.join([pre_context, import_stmt, post_context])
-                yield khodemod.Patch('', text_to_add, start, start)
+                yield khodemod.Patch(filename, '', text_to_add, start, start)
 
     return suggestor
 
@@ -759,7 +765,8 @@ def import_sort_suggestor(filename, body):
     diffs = difflib.SequenceMatcher(None, body, fixed_body).get_opcodes()
     for op, i1, i2, j1, j2 in diffs:
         if op != 'equal':
-            yield khodemod.Patch(body[i1:i2], fixed_body[j1:j2], i1, i2)
+            yield khodemod.Patch(filename,
+                                 body[i1:i2], fixed_body[j1:j2], i1, i2)
 
 
 def main():

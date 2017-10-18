@@ -28,40 +28,46 @@ def regex_suggestor(regex, replacement):
     """
     def suggestor(filename, body):
         for match in regex.finditer(body):
-            yield Patch(match.group(0), match.expand(replacement),
+            yield Patch(filename, match.group(0), match.expand(replacement),
                         match.start(), match.end())
     return suggestor
 
 
 # old/new are strings; start/end are character offsets for the old text.
 # TODO(benkraft): Include context for patching?
-_Patch = collections.namedtuple('Patch', ['old', 'new', 'start', 'end'])
+_Patch = collections.namedtuple('Patch',
+                                ['filename', 'old', 'new', 'start', 'end'])
 # pos is a character offset for the warning.
-WarningInfo = collections.namedtuple('WarningInfo', ['pos', 'message'])
+WarningInfo = collections.namedtuple('WarningInfo',
+                                     ['filename', 'pos', 'message'])
 
 
 class Patch(_Patch):
     def apply_to(self, body):
         if body[self.start:self.end] != self.old:
-            raise FatalError(self.start, "patch didn't apply: %s" % (self,))
+            raise FatalError(self.filename, self.start,
+                             "patch didn't apply: %s" % (self,))
         return body[:self.start] + self.new + body[self.end:]
 
 
 class FatalError(RuntimeError):
     """Something went horribly wrong; we should give up patching this file."""
-    def __init__(self, pos, message):
+    def __init__(self, filename, pos, message):
+        self.filename = filename
         self.pos = pos
         self.message = message
 
     def __repr__(self):
-        return "FatalError(%r, %r)" % (self.pos, self.message)
+        return "FatalError(%r, %r, %r)" % (self.filename, self.pos,
+                                           self.message)
 
     def __unicode__(self):
-        return "Fatal Error:%s:%s" % (self.pos, self.message)
+        return "Fatal Error:%s:%s:%s" % (self.filename, self.pos, self.message)
 
     def __eq__(self, other):
         return (isinstance(other, FatalError) and
-                self.pos == other.pos and self.message == other.message)
+                self.filename == other.filename and self.pos == other.pos and
+                self.message == other.message)
 
 
 def extensions_path_filter(extensions, include_extensionless=False):
@@ -114,7 +120,7 @@ def pos_to_line_col(text, pos):
             return (i + 1, pos + 1)
         else:
             pos -= len(line)
-    raise FatalError("Invalid position %s!" % pos)
+    raise RuntimeError("Invalid position %s!" % pos)
 
 
 def line_col_to_pos(text, line, col):
@@ -126,7 +132,7 @@ def line_col_to_pos(text, line, col):
     try:
         return sum(len(line) for line in lines[:line - 1]) + col - 1
     except IndexError:
-        raise FatalError("Invalid line number %s!" % line)
+        raise RuntimeError("Invalid line number %s!" % line)
 
 
 class Frontend(object):
@@ -153,7 +159,7 @@ class Frontend(object):
         """
         raise NotImplementedError("Subclasses must override.")
 
-    def handle_error(self, filename, error):
+    def handle_error(self, error):
         """Accept a fatal error, and tell the user we'll skip this file."""
         raise NotImplementedError("Subclasses must override.")
 
@@ -191,13 +197,30 @@ class Frontend(object):
             # HACK: consider addition-ish before deletion-ish.
             patches.sort(key=lambda p: (p.start, len(p.old) - len(p.new)))
             warnings = [w for w in vals if isinstance(w, WarningInfo)]
-            if warnings:
-                warnings.sort(key=lambda w: w.pos)
-                self.handle_warnings(path, warnings)
-            if patches:
-                self.handle_patches(path, patches)
+            warnings.sort(key=lambda w: w.pos)
+
+            # Typically when you run a suggestor on a file, all the
+            # patches it suggests will be for that file as well, but
+            # it's possible for a suggestor to suggest changes to
+            # another file (e.g. when moving code from one file to
+            # another).  So we group by file-to-change here.
+            patches_by_file = {}
+            warnings_by_file = {}
+            for patch in patches:
+                patches_by_file.setdefault(patch.filename, []).append(patch)
+            for warning in warnings:
+                warnings_by_file.setdefault(warning.filename, []).append(
+                    warning)
+
+            seen_filenames = list(set(patches_by_file) | set(warnings_by_file))
+            seen_filenames.sort(key=lambda f: (0 if f == path else 1, f))
+            for filename in seen_filenames:
+                if filename in warnings_by_file:
+                    self.handle_warnings(filename, warnings_by_file[filename])
+                if filename in patches_by_file:
+                    self.handle_patches(filename, patches_by_file[filename])
         except FatalError as e:
-            self.handle_error(path, e)
+            self.handle_error(e)
 
     def run_suggestor(self, suggestor,
                       path_filter=default_path_filter(), root='.'):
@@ -234,6 +257,7 @@ class AcceptingFrontend(Frontend):
         # offsets.
         new_body = body
         for patch in reversed(patches):
+            assert filename == patch.filename, patch
             new_body = patch.apply_to(new_body)
         if body != new_body:
             self.write_file(filename, new_body)
@@ -241,17 +265,18 @@ class AcceptingFrontend(Frontend):
     def handle_warnings(self, filename, warnings):
         body = self.read_file(filename)
         for warning in warnings:
+            assert filename == warning.filename, warning
             lineno, _ = pos_to_line_col(body, warning.pos)
             line = body.splitlines()[lineno]
             print "WARNING:%s\n    on %s:%s --> %s" % (
                 warning.message, filename, lineno, line)
 
-    def handle_error(self, filename, error):
-        body = self.read_file(filename)
+    def handle_error(self, error):
+        body = self.read_file(error.filename)
         lineno, _ = pos_to_line_col(body, error.pos)
         line = body.splitlines()[lineno]
         print "ERROR:%s\n    on %s:%s --> %s" % (
-            error.message, filename, lineno, line)
+            error.message, error.filename, lineno, line)
 
 
 class TestFrontend(Frontend):
@@ -275,8 +300,8 @@ class TestFrontend(Frontend):
         assert filename == self._FAKE_FILENAME
         self.warnings = warnings
 
-    def handle_error(self, filename, error):
-        assert filename == self._FAKE_FILENAME
+    def handle_error(self, error):
+        assert error.filename == self._FAKE_FILENAME
         self.error = error
 
     def read_file(self, filename):
