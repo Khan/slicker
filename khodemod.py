@@ -164,11 +164,21 @@ class Frontend(object):
         raise NotImplementedError("Subclasses must override.")
 
     def read_file(self, filename):
+        """Return file contents, or '' if the file is not found."""
         # TODO(benkraft): Cache contents.
-        with open(filename) as f:
-            return f.read()
+        try:
+            with open(filename) as f:
+                return f.read()
+        except IOError as e:
+            if e.errno == 2:    # No such file
+                return ''       # empty file
+            raise
 
     def write_file(self, filename, text):
+        try:
+            os.makedirs(os.path.normpath(os.path.dirname(filename)))
+        except (IOError, OSError):     # hopefully "directory already exists"
+            pass
         with open(filename, 'w') as f:
             f.write(text)
             self._modified_files.add(filename)
