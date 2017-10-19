@@ -367,25 +367,43 @@ def _imports_to_remove(localnames_for_old_fullname, new_localname,
     return (removable_imports, maybe_removable_imports)
 
 
-def _get_import_area(imp, file_info):
-    """Return the start/end character offsets of the whole import region.
+def _get_area_for_ast_node(node, file_info, include_previous_comments):
+    """Return the start/end character offsets of the input ast-node + friends.
 
-    We include everything that is part of the same line, as well as its ending
-    newline, (but excluding semicolons), as part of the import region.
+    We include every line that node spans, as well as their ending newlines,
+    though if the last line has a semicolon we end at the semicolon.
 
-    TODO(benkraft): Should we look at preceding full-line comments?  We end up
-    fighting with fix_python_imports if we do.
+    If include_previous_comments is True, we also include all comments
+    and newlines that directly precede the given node.
     """
-    toks = list(file_info.tokens.get_tokens(imp.node, include_extra=True))
+    toks = list(file_info.tokens.get_tokens(node, include_extra=True))
     first_tok = toks[0]
     last_tok = toks[-1]
 
-    # prev_tok will be the last token before the import area, or None if there
-    # isn't one.
-    prev_tok = next(reversed(
-        [tok for tok in file_info.tokens.tokens[:first_tok.index]
-         if tok.string == '\n' or not tok.string.isspace()]), None)
+    if include_previous_comments:
+        for istart in xrange(first_tok.index - 1, -1, -1):
+            if (not file_info.tokens.tokens[istart].type == tokenize.COMMENT
+                    and not file_info.tokens.tokens[istart].string.isspace()):
+                break
+        else:
+            istart = -1
+    else:
+        for istart in xrange(first_tok.index - 1, -1, -1):
+            if (file_info.tokens.tokens[istart].string == '\n' or
+                    not file_info.tokens.tokens[istart].string.isspace()):
+                break
+        else:
+            istart = -1
 
+    # We don't want the *very* earliest newline before us to be
+    # part of our context: it's ending the previous statement.
+    if istart >= 0 and file_info.tokens.tokens[istart + 1].string == '\n':
+        istart += 1
+
+    prev_tok_endpos = (file_info.tokens.tokens[istart].endpos
+                       if istart >= 0 else 0)
+
+    # Figure out how much of the last line to keep.
     for tok in file_info.tokens.tokens[last_tok.index + 1:]:
         if tok.type == tokenize.COMMENT:
             last_tok = tok
@@ -395,7 +413,7 @@ def _get_import_area(imp, file_info):
         else:
             break
 
-    return (prev_tok.endpos if prev_tok else 0, last_tok.endpos)
+    return (prev_tok_endpos, last_tok.endpos)
 
 
 def _replace_in_string(str_tokens, regex, replacement, file_info):
@@ -540,6 +558,9 @@ def fix_uses_suggestor(old_fullname, new_fullname,
             raise khodemod.FatalError(filename, 0,
                                       "Couldn't parse this file: %s" % e)
 
+        # TODO(csilvers): handle references to symbols in oldfile and
+        # newfile when moving a symbol from one file to another.
+
         # PART THE FIRST:
         #    Set things up, do some simple checks, decide whether to operate.
 
@@ -676,7 +697,10 @@ def fix_uses_suggestor(old_fullname, new_fullname,
                     filename, imp.start,
                     "I don't know how to edit this import.")
             else:
-                start, end = _get_import_area(imp, file_info)
+                # TODO(benkraft): Should we look at preceding comments?
+                # We end up fighting with fix_python_imports if we do.
+                start, end = _get_area_for_ast_node(
+                    imp.node, file_info, include_previous_comments=False)
                 yield khodemod.Patch(filename, body[start:end], '', start, end)
 
         # Add a new import, if necessary.
@@ -730,7 +754,10 @@ def fix_uses_suggestor(old_fullname, new_fullname,
                 # and trailing newline.
                 # TODO(benkraft): If the context we copy is a comment, and we
                 # are keeping the old import, maybe don't copy it?
-                start, end = _get_import_area(imp, file_info)
+                # TODO(benkraft): Should we look at preceding comments?
+                # We end up fighting with fix_python_imports if we do.
+                start, end = _get_area_for_ast_node(
+                    imp.node, file_info, include_previous_comments=False)
                 pre_context = body[start:imp.start]
                 post_context = body[imp.end:end]
                 # Now we can add the new import and have the same context
