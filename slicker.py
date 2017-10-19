@@ -442,7 +442,6 @@ def _replace_in_string(str_tokens, regex, replacement, file_info):
         # Note:
         # 0 <= start_within_token < len(tokens_less_delims[start_token_index])
         # and 0 < end_within_token <= len(tokens_less_delims[end_token_index])
-        # TODO(benkraft): DRY a bit.
         for i, tok in enumerate(tokens_less_delims):
             if start_within_token < len(tok):
                 start_token_index = i
@@ -722,9 +721,8 @@ def fix_uses_suggestor(old_fullname, new_fullname,
                 add_at = explicit_imports
             else:
                 # If not, we add at the first implicit import only.
-                # TODO(csilvers): add a test for this case.
-                first_implicit_localname = next(
-                    sorted(old_localnames, key=lambda ln: ln.imp.start))
+                first_implicit_localname = min(old_localnames,
+                                               key=lambda ln: ln.imp.start)
                 add_at = {first_implicit_localname.imp}
 
             for imp in add_at:

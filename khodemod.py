@@ -337,4 +337,4 @@ class TestFrontend(Frontend):
             testcase.assertEqual(self.error, expected_error)
         else:
             testcase.assertEqual(self.warnings, expected_warnings)
-            testcase.assertEqual(self.body, expected_body)
+            testcase.assertMultiLineEqual(self.body, expected_body)

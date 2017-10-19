@@ -379,6 +379,12 @@ class FullFileTest(unittest.TestCase):
             slicker.fix_uses_suggestor('foo.bar.baz.some_function',
                                        'quux.new_name', 'quux'))
 
+    def test_moving_implicit(self):
+        self.run_test(
+            'moving_implicit',
+            slicker.fix_uses_suggestor('foo.secrets.lulz',
+                                       'quux.new_name', 'quux'))
+
     def test_slicker(self):
         """Test on (a perhaps out of date version of) slicker itself.
 
