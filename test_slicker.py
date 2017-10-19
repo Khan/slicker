@@ -1,4 +1,7 @@
 import ast
+import os
+import shutil
+import tempfile
 import unittest
 
 import khodemod
@@ -294,6 +297,30 @@ class NamesStartingWithTest(unittest.TestCase):
                 '        return a.d(a.e + a.f)\n'
                 'abc(a.g)\n'))),
             {'a.b', 'a.c', 'a.d', 'a.e', 'a.f', 'a.g'})
+
+
+class RootTest(unittest.TestCase):
+    maxDiff = None
+
+    def setUp(self):
+        self.tmpdir = os.path.realpath(
+            tempfile.mkdtemp(prefix=(self.__class__.__name__ + '.')))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir)
+
+    def test_root(self):
+        shutil.copyfile('testdata/simple_in.py',
+                        os.path.join(self.tmpdir, 'in.py'))
+
+        slicker.make_fixes('foo.some_function', 'bar.new_name', 'bar',
+                           project_root=self.tmpdir)
+
+        with open('testdata/simple_out.py') as f:
+            expected_body = f.read()
+        with open(os.path.join(self.tmpdir, 'in.py')) as f:
+            actual_body = f.read()
+        self.assertMultiLineEqual(expected_body, actual_body)
 
 
 class FullFileTest(unittest.TestCase):

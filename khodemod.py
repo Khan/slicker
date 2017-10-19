@@ -137,9 +137,11 @@ def line_col_to_pos(text, line, col):
 
 class Frontend(object):
     def __init__(self):
+        # (root, filename) of files we've modified.
+        # filename is relative to root.
         self._modified_files = set()
 
-    def handle_patches(self, filename, patches):
+    def handle_patches(self, root, filename, patches):
         """Accept a list of patches for a file, and apply them.
 
         This may prompt the user for confirmation, inform them of the patches,
@@ -150,7 +152,7 @@ class Frontend(object):
         """
         raise NotImplementedError("Subclasses must override.")
 
-    def handle_warnings(self, filename, warnings):
+    def handle_warnings(self, root, filename, warnings):
         """Accept a list of warnings for a file, and tell the user.
 
         Or don't!  It's up to the subclasses.  The warnings will be ordered by
@@ -159,31 +161,37 @@ class Frontend(object):
         """
         raise NotImplementedError("Subclasses must override.")
 
-    def handle_error(self, error):
+    def handle_error(self, root, error):
         """Accept a fatal error, and tell the user we'll skip this file."""
         raise NotImplementedError("Subclasses must override.")
 
-    def read_file(self, filename):
-        """Return file contents, or '' if the file is not found."""
+    def read_file(self, root, filename):
+        """Return file contents, or '' if the file is not found.
+
+        filename is taken relative to root.
+        """
         # TODO(benkraft): Cache contents.
         try:
-            with open(filename) as f:
+            with open(os.path.join(root, filename)) as f:
                 return f.read()
         except IOError as e:
             if e.errno == 2:    # No such file
                 return ''       # empty file
             raise
 
-    def write_file(self, filename, text):
+    def write_file(self, root, filename, text):
+        """filename is taken to be relative to root."""
+        abspath = os.path.abspath(os.path.join(root, filename))
         try:
-            os.makedirs(os.path.normpath(os.path.dirname(filename)))
+            os.makedirs(os.path.dirname(abspath))
         except (IOError, OSError):     # hopefully "directory already exists"
             pass
-        with open(filename, 'w') as f:
+        with open(abspath, 'w') as f:
             f.write(text)
-            self._modified_files.add(filename)
+            self._modified_files.add((root, filename))
 
     def resolve_paths(self, path_filter, root='.'):
+        """All files under root (relative to root), ignoring filtered files."""
         for dirpath, dirnames, filenames in os.walk(root):
             # TODO(benkraft): Avoid traversing excluded directories.
             for name in filenames:
@@ -198,10 +206,12 @@ class Frontend(object):
         """
         return paths
 
-    def _run_suggestor_on_file(self, suggestor, path):
+    def _run_suggestor_on_file(self, suggestor, root, filename):
+        """filename is relative to root."""
         try:
             # Ensure the entire suggestor runs before we start patching.
-            vals = list(suggestor(path, self.read_file(path)))
+            vals = list(
+                suggestor(filename, self.read_file(root, filename)))
             patches = [p for p in vals if isinstance(p, Patch)
                        and p.old != p.new]
             # HACK: consider addition-ish before deletion-ish.
@@ -223,19 +233,22 @@ class Frontend(object):
                     warning)
 
             seen_filenames = list(set(patches_by_file) | set(warnings_by_file))
-            seen_filenames.sort(key=lambda f: (0 if f == path else 1, f))
+            seen_filenames.sort(key=lambda f: (0 if f == filename else 1, f))
             for filename in seen_filenames:
                 if filename in warnings_by_file:
-                    self.handle_warnings(filename, warnings_by_file[filename])
+                    self.handle_warnings(root, filename,
+                                         warnings_by_file[filename])
                 if filename in patches_by_file:
-                    self.handle_patches(filename, patches_by_file[filename])
+                    self.handle_patches(root, filename,
+                                        patches_by_file[filename])
         except FatalError as e:
-            self.handle_error(e)
+            self.handle_error(root, e)
 
     def run_suggestor(self, suggestor,
                       path_filter=default_path_filter(), root='.'):
-        for path in self.progress_bar(self.resolve_paths(path_filter, root)):
-            self._run_suggestor_on_file(suggestor, path)
+        filenames = self.resolve_paths(path_filter, root)
+        for filename in self.progress_bar(filenames):
+            self._run_suggestor_on_file(suggestor, root, filename)
 
     def run_suggestor_on_modified_files(self, suggestor):
         """Like run_suggestor, but only on files we've modified.
@@ -243,8 +256,8 @@ class Frontend(object):
         Useful for fixups after the fact that we don't want to apply to the
         whole codebase, only the files we touched.
         """
-        for path in self.progress_bar(self._modified_files):
-            self._run_suggestor_on_file(suggestor, path)
+        for (root, filename) in self.progress_bar(self._modified_files):
+            self._run_suggestor_on_file(suggestor, root, filename)
 
 
 class AcceptingFrontend(Frontend):
@@ -261,8 +274,8 @@ class AcceptingFrontend(Frontend):
         else:
             return paths
 
-    def handle_patches(self, filename, patches):
-        body = self.read_file(filename)
+    def handle_patches(self, root, filename, patches):
+        body = self.read_file(root, filename)
         # We operate in reverse order to avoid having to keep track of changing
         # offsets.
         new_body = body
@@ -270,10 +283,10 @@ class AcceptingFrontend(Frontend):
             assert filename == patch.filename, patch
             new_body = patch.apply_to(new_body)
         if body != new_body:
-            self.write_file(filename, new_body)
+            self.write_file(root, filename, new_body)
 
-    def handle_warnings(self, filename, warnings):
-        body = self.read_file(filename)
+    def handle_warnings(self, root, filename, warnings):
+        body = self.read_file(root, filename)
         for warning in warnings:
             assert filename == warning.filename, warning
             lineno, _ = pos_to_line_col(body, warning.pos)
@@ -281,8 +294,8 @@ class AcceptingFrontend(Frontend):
             print "WARNING:%s\n    on %s:%s --> %s" % (
                 warning.message, filename, lineno, line)
 
-    def handle_error(self, error):
-        body = self.read_file(error.filename)
+    def handle_error(self, root, error):
+        body = self.read_file(root, error.filename)
         lineno, _ = pos_to_line_col(body, error.pos)
         line = body.splitlines()[lineno]
         print "ERROR:%s\n    on %s:%s --> %s" % (
@@ -301,20 +314,20 @@ class TestFrontend(Frontend):
     def resolve_paths(self, path_filter, root):
         return [self._FAKE_FILENAME]
 
-    def handle_patches(self, filename, patches):
+    def handle_patches(self, root, filename, patches):
         assert filename == self._FAKE_FILENAME
         for patch in reversed(patches):
             self.body = patch.apply_to(self.body)
 
-    def handle_warnings(self, filename, warnings):
+    def handle_warnings(self, root, filename, warnings):
         assert filename == self._FAKE_FILENAME
         self.warnings = warnings
 
-    def handle_error(self, error):
+    def handle_error(self, root, error):
         assert error.filename == self._FAKE_FILENAME
         self.error = error
 
-    def read_file(self, filename):
+    def read_file(self, root, filename):
         assert filename == self._FAKE_FILENAME
         return self.body
 

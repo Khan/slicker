@@ -506,6 +506,7 @@ class File(object):
     TODO(benkraft): Also cache things like _compute_all_imports.
     """
     def __init__(self, filename, body):
+        """filename is relative to the value of --root."""
         self.filename = filename
         self.body = body
         self.tree = ast.parse(body)
@@ -533,6 +534,7 @@ def fix_uses_suggestor(old_fullname, new_fullname,
             we'll just use "import name_to_import".
     """
     def suggestor(filename, body):
+        """filename is relative to the value of --root."""
         try:
             file_info = File(filename, body)
         except Exception as e:
@@ -742,7 +744,7 @@ def fix_uses_suggestor(old_fullname, new_fullname,
 
 
 def import_sort_suggestor(filename, body):
-    """Suggestor to fix up imports in a file."""
+    """Suggestor to fix up imports in a file. `filename` relative to --root."""
     # TODO(benkraft): merge this with the import-adding, so we just show
     # one diff to add in the right place, unless there is additional
     # sorting to do.
@@ -769,6 +771,28 @@ def import_sort_suggestor(filename, body):
                                  body[i1:i2], fixed_body[j1:j2], i1, i2)
 
 
+def make_fixes(old_fullname, new_fullname, name_to_import, import_alias=None,
+               project_root='.', verbose=False):
+    """name_to_import is the module-part of new_fullname."""
+    suggestor = fix_uses_suggestor(old_fullname, new_fullname,
+                                   name_to_import, import_alias)
+
+    # TODO(benkraft): Support other khodemod frontends.
+    frontend = khodemod.AcceptingFrontend(verbose=verbose)
+
+    def log(msg):
+        if verbose:
+            print msg
+
+    log("===== Updating references =====")
+    frontend.run_suggestor(suggestor, root=project_root)
+
+    log("====== Resorting imports ======")
+    frontend.run_suggestor_on_modified_files(import_sort_suggestor)
+
+    log("======== Move complete! =======")
+
+
 def main():
     # TODO(benkraft): Allow moving multiple symbols (from/to the same modules)
     # at once.
@@ -779,10 +803,14 @@ def main():
     parser.add_argument('-s', '--symbol', action='store_true',
                         help=('Treat moved name as an individual symbol, '
                               'rather than a whole module.'))
-    parser.add_argument('-a', '--alias', metavar='ALIAS',
+    parser.add_argument('-a', '--alias',
                         help=('Alias to use when adding new import lines.  '
                               'This is the module-alias, even if you are '
                               'moving a symbol.'))
+    parser.add_argument('--root', default='.',
+                        help=('The project-root of the directory-tree you '
+                              'want to do the renaming in.  old_fullname, '
+                              'and new_fullname are taken relative to root.'))
     parser.add_argument('-v', '--verbose', action='store_true',
                         help="Print some information about what we're doing.")
     parsed_args = parser.parse_args()
@@ -794,24 +822,10 @@ def main():
     else:
         name_to_import = parsed_args.new_fullname
 
-    suggestor = fix_uses_suggestor(
-        parsed_args.old_fullname, parsed_args.new_fullname,
-        name_to_import, import_alias=parsed_args.alias)
-
-    # TODO(benkraft): Support other khodemod frontends.
-    frontend = khodemod.AcceptingFrontend(verbose=parsed_args.verbose)
-
-    def log(msg):
-        if parsed_args.verbose:
-            print msg
-
-    log("===== Updating references =====")
-    frontend.run_suggestor(suggestor)
-
-    log("====== Resorting imports ======")
-    frontend.run_suggestor_on_modified_files(import_sort_suggestor)
-
-    log("======== Move complete! =======")
+    make_fixes(
+        parsed_args.old_fullname, parsed_args.new_fullname, name_to_import,
+        import_alias=parsed_args.alias, project_root=parsed_args.root,
+        verbose=parsed_args.verbose)
 
 
 if __name__ == '__main__':
