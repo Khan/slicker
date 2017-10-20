@@ -44,10 +44,14 @@ WarningInfo = collections.namedtuple('WarningInfo',
 
 class Patch(_Patch):
     def apply_to(self, body):
-        if body[self.start:self.end] != self.old:
+        if body[self.start:self.end] != (self.old or ''):
             raise FatalError(self.filename, self.start,
                              "patch didn't apply: %s" % (self,))
-        return body[:self.start] + self.new + body[self.end:]
+        if self.new is None:    # means we want to delete the new file
+            assert self.start == 0 and self.end == len(body), self
+            return None
+        else:
+            return body[:self.start] + self.new + body[self.end:]
 
 
 class FatalError(RuntimeError):
@@ -165,8 +169,12 @@ class Frontend(object):
         """Accept a fatal error, and tell the user we'll skip this file."""
         raise NotImplementedError("Subclasses must override.")
 
+    # TODO(csilvers): make read_file and write_file and resolve_paths
+    # global functions instead of Frontend objects, and have tests mock
+    # them out rather than using a different acceptor.
+
     def read_file(self, root, filename):
-        """Return file contents, or '' if the file is not found.
+        """Return file contents, or None if the file is not found.
 
         filename is taken relative to root.
         """
@@ -176,19 +184,28 @@ class Frontend(object):
                 return f.read()
         except IOError as e:
             if e.errno == 2:    # No such file
-                return ''       # empty file
+                return None     # empty file
             raise
 
     def write_file(self, root, filename, text):
         """filename is taken to be relative to root."""
         abspath = os.path.abspath(os.path.join(root, filename))
-        try:
-            os.makedirs(os.path.dirname(abspath))
-        except (IOError, OSError):     # hopefully "directory already exists"
-            pass
-        with open(abspath, 'w') as f:
-            f.write(text)
-            self._modified_files.add((root, filename))
+        if text is None:    # it means we want to delete filename
+            try:
+                os.unlink(abspath)
+            except OSError as e:
+                if e.errno == 2:   # No such file: already deleted
+                    pass
+                raise
+            # TODO(csilvers): delete our parent dirs if they're empty?
+        else:
+            try:
+                os.makedirs(os.path.dirname(abspath))
+            except (IOError, OSError):  # hopefully "directory already exists"
+                pass
+            with open(abspath, 'w') as f:
+                f.write(text)
+                self._modified_files.add((root, filename))
 
     def resolve_paths(self, path_filter, root='.'):
         """All files under root (relative to root), ignoring filtered files."""
@@ -211,11 +228,12 @@ class Frontend(object):
         try:
             # Ensure the entire suggestor runs before we start patching.
             vals = list(
-                suggestor(filename, self.read_file(root, filename)))
+                suggestor(filename, self.read_file(root, filename) or ''))
             patches = [p for p in vals if isinstance(p, Patch)
                        and p.old != p.new]
             # HACK: consider addition-ish before deletion-ish.
-            patches.sort(key=lambda p: (p.start, len(p.old) - len(p.new)))
+            patches.sort(key=lambda p: (p.start,
+                                        len(p.old or '') - len(p.new or '')))
             warnings = [w for w in vals if isinstance(w, WarningInfo)]
             warnings.sort(key=lambda w: w.pos)
 
@@ -257,7 +275,10 @@ class Frontend(object):
         whole codebase, only the files we touched.
         """
         for (root, filename) in self.progress_bar(self._modified_files):
-            self._run_suggestor_on_file(suggestor, root, filename)
+            # If we modified a file by deleting it, no more
+            # suggestions for you!
+            if os.path.exists(os.path.join(root, filename)):
+                self._run_suggestor_on_file(suggestor, root, filename)
 
 
 class AcceptingFrontend(Frontend):
@@ -278,7 +299,7 @@ class AcceptingFrontend(Frontend):
         body = self.read_file(root, filename)
         # We operate in reverse order to avoid having to keep track of changing
         # offsets.
-        new_body = body
+        new_body = body or ''
         for patch in reversed(patches):
             assert filename == patch.filename, patch
             new_body = patch.apply_to(new_body)
@@ -286,7 +307,7 @@ class AcceptingFrontend(Frontend):
             self.write_file(root, filename, new_body)
 
     def handle_warnings(self, root, filename, warnings):
-        body = self.read_file(root, filename)
+        body = self.read_file(root, filename) or ''
         for warning in warnings:
             assert filename == warning.filename, warning
             lineno, _ = pos_to_line_col(body, warning.pos)
@@ -295,7 +316,7 @@ class AcceptingFrontend(Frontend):
                 warning.message, filename, lineno, line)
 
     def handle_error(self, root, error):
-        body = self.read_file(root, error.filename)
+        body = self.read_file(root, error.filename) or ''
         lineno, _ = pos_to_line_col(body, error.pos)
         line = body.splitlines()[lineno]
         print "ERROR:%s\n    on %s:%s --> %s" % (

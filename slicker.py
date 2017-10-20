@@ -69,6 +69,11 @@ def _filename_for_module_name(module_name):
     return '%s.py' % module_name.replace('.', '/')
 
 
+def _module_name_for_filename(filename):
+    """filename is relative to a sys.path entry, such as your project-root."""
+    return os.path.splitext(filename)[0].replace('/', '.')
+
+
 def _dotted_starts_with(string, prefix):
     """Like string.startswith(prefix), but in the dotted sense.
 
@@ -530,8 +535,46 @@ class File(object):
         self.tokens = asttokens.ASTTokens(body, tree=self.tree)
 
 
-def fix_uses_suggestor(old_fullname, new_fullname,
-                       name_to_import, import_alias=None):
+def _move_module_suggestor(project_root, old_fullname, new_fullname):
+    """Move a module from old_fullname to new_fullname.
+
+    old_fullname and new_fullname should be dotted names.  Their paths
+    are taken to be relative to project_root.  The destination must
+    not already exist.
+    """
+    def filename_for(mod):
+        return os.path.join(project_root, _filename_for_module_name(mod))
+
+    def suggestor(filename, body):
+        new_filename = _filename_for_module_name(new_fullname)
+        old_pathname = filename_for(old_fullname)
+        new_pathname = filename_for(new_fullname)
+        if (os.path.normpath(os.path.join(project_root, filename)) !=
+                os.path.normpath(old_pathname)):
+            return
+        assert not os.path.exists(new_pathname), new_pathname
+
+        yield khodemod.Patch(filename, body, None, 0, len(body))
+        yield khodemod.Patch(new_filename, None, body, 0, 0)
+
+    return suggestor
+
+
+def _move_symbol_suggestor(project_root, old_fullname, new_fullname):
+    """Move a symbol from old_fullname to new_fullname.
+
+    old_fullname and new_fullname should both be dotted names of
+    the form module.symbol.  The destination fullname should not
+    already exist.
+    """
+    def suggestor(filename, body):
+        return []    # TODO(csilvers): implement this!
+
+    return suggestor
+
+
+def _fix_uses_suggestor(old_fullname, new_fullname,
+                        name_to_import, import_alias=None):
     """The main suggestor to fix all references to a file.
 
     Arguments:
@@ -768,7 +811,7 @@ def fix_uses_suggestor(old_fullname, new_fullname,
     return suggestor
 
 
-def import_sort_suggestor(filename, body):
+def _import_sort_suggestor(filename, body):
     """Suggestor to fix up imports in a file. `filename` relative to --root."""
     # TODO(benkraft): merge this with the import-adding, so we just show
     # one diff to add in the right place, unless there is additional
@@ -796,24 +839,156 @@ def import_sort_suggestor(filename, body):
                                  body[i1:i2], fixed_body[j1:j2], i1, i2)
 
 
+def _normalize_fullnames(project_root, old_fullname, new_fullname,
+                         frontend, path_filter=khodemod.default_path_filter()):
+    """Yield a list of old-new-info triples that effect the requested rename.
+
+    In the simple case old_fullname is a module and new_fullname is a
+    module, this will just return the input: [(old_fullname,
+    new_fullname)].  Likewise if old_fullname is a symbol and
+    new_fullname is a symbol.
+
+    But if old_fullname is a package (dir) and so is new_fullname,
+    then we will return a list of (old_module, new_module, is_symbol)
+    triples for every module under the dir.
+
+    We also handle cases where old_fullname and new_fullname are not
+    of the same "type", and where new_fullname already exists.  For
+    instance, when moving a module into a package, we convert
+    new_fullname to have the right name in the destination package.
+    And when moving a package into a directory that already exists,
+    we'll make it a subdir of the target-dir.
+
+    Some types of input are illegal: it's probably a mistake if
+    old_fullname is a symbol and new_fullname is a package.  Or
+    if old_fullname doesn't actually exist.  We raise in those cases.
+
+    Yields:
+       (old_fullname, new_fullname, is_symbol) triples.
+       is_symbol is true if old_fullname is a symbol in a module, or
+       false if it's a module.
+
+    """
+    def filename_for(mod):
+        return os.path.join(project_root, _filename_for_module_name(mod))
+
+    def _fullname_type(fullname):
+        if os.path.exists(filename_for(fullname)):
+            return "module"
+        if os.path.exists(filename_for(fullname + '.__init__')):
+            return "package"
+        if os.path.exists(filename_for(fullname.rsplit('.', 1)[0])):
+            return "symbol"
+        return "unknown"
+
+    def _modules_under(package_name):
+        """Yield module-names relative to package_name-root."""
+        package_dir = os.path.dirname(filename_for(package_name + '.__init__'))
+        for path in frontend.resolve_paths(path_filter, root=package_dir):
+            yield _module_name_for_filename(path)
+
+    old_type = _fullname_type(old_fullname)
+    new_type = _fullname_type(new_fullname)
+
+    # Below, we follow the following rule: if we don't know what
+    # the type of new_type is (because it doesn't exist yet), we
+    # assume the user wanted it to be the same type as old_type.
+
+    if old_type == "symbol":
+        if new_type in ("symbol", "unknown"):
+            yield (old_fullname, new_fullname, True)
+        elif new_type == "module":
+            symbol = old_fullname.rsplit('.', 1)
+            # TODO(csilvers): check new_fullname doesn't already define
+            # a symbol named `symbol`.
+            yield (old_fullname, '%s.%s' % (new_fullname, symbol), True)
+        elif new_type == "package":
+            raise ValueError("Cannot move symbol '%s' to a package (%s)"
+                             % (old_fullname, new_fullname))
+
+    elif old_type == "module":
+        if new_type == "symbol":
+            raise ValueError("Cannot move a module '%s' to a symbol (%s)"
+                             % (old_fullname, new_fullname))
+        elif new_type == "module":
+            raise ValueError("Cannot use slicker to merge modules "
+                             "(%s already exists)" % new_fullname)
+        elif new_type == "package":
+            module_basename = old_fullname.rsplit('.', 1)[-1]
+            if os.path.exists(filename_for(new_fullname)):
+                raise ValueError("Cannot move module '%s' into '%s': "
+                                 "'%s.%s' already exists"
+                                 % (old_fullname, new_fullname,
+                                    new_fullname, module_basename))
+            yield (old_fullname, '%s.%s' % (new_fullname, module_basename),
+                   False)
+        elif new_type == "unknown":
+            yield (old_fullname, new_fullname, False)
+
+    elif old_type == "package":
+        if new_type in ("symbol", "module"):
+            raise ValueError("Cannot move a package '%s' into a %s (%s)"
+                             % (old_fullname, new_type, new_fullname))
+        elif new_type == "package":
+            package_basename = old_fullname.rsplit('.', 1)[-1]
+            # mv semantics, same as if we did 'mv /var/log /etc'
+            new_fullname = '%s.%s' % (new_fullname, package_basename)
+            if os.path.exists(filename_for(new_fullname)):
+                raise ValueError("Cannot move package '%s': "
+                                 "'%s' already exists"
+                                 % (old_fullname, new_fullname))
+            for module in _modules_under(old_fullname):
+                yield ('%s.%s' % (old_fullname, module),
+                       '%s.%s' % (new_fullname, module),
+                       False)
+        elif new_type == "unknown":
+            for module in _modules_under(old_fullname):
+                yield ('%s.%s' % (old_fullname, module),
+                       '%s.%s' % (new_fullname, module),
+                       False)
+
+    elif old_type == "unknown":
+        raise ValueError("Cannot figure out what '%s' is: "
+                         "module or package not found" % old_fullname)
+
+
 def make_fixes(old_fullname, new_fullname, name_to_import, import_alias=None,
-               project_root='.', verbose=False):
+               project_root='.', automove=True, verbose=False):
     """name_to_import is the module-part of new_fullname."""
-    suggestor = fix_uses_suggestor(old_fullname, new_fullname,
-                                   name_to_import, import_alias)
-
-    # TODO(benkraft): Support other khodemod frontends.
-    frontend = khodemod.AcceptingFrontend(verbose=verbose)
-
     def log(msg):
         if verbose:
             print msg
 
-    log("===== Updating references =====")
-    frontend.run_suggestor(suggestor, root=project_root)
+    # TODO(benkraft): Support other khodemod frontends.
+    frontend = khodemod.AcceptingFrontend(verbose=verbose)
+
+    # Return a list of (old_fullname, new_fullname) pairs that we can rename.
+    old_new_fullname_pairs = _normalize_fullnames(
+        project_root, old_fullname, new_fullname, frontend)
+
+    for (oldname, newname, is_symbol) in old_new_fullname_pairs:
+        if automove:
+            log("===== Moving %s to %s =====" % (oldname, newname))
+            if is_symbol:
+                move_suggestor = _move_symbol_suggestor(
+                    project_root, oldname, newname)
+            else:
+                move_suggestor = _move_module_suggestor(
+                    project_root, oldname, newname)
+            frontend.run_suggestor(move_suggestor, root=project_root)
+
+        log("===== Updating references of %s to %s =====" % (oldname, newname))
+        if is_symbol:
+            name_to_import = newname.rsplit('.', 1)[0]
+        else:
+            name_to_import = newname
+
+        fix_uses_suggestor = _fix_uses_suggestor(
+            oldname, newname, name_to_import, import_alias)
+        frontend.run_suggestor(fix_uses_suggestor, root=project_root)
 
     log("====== Resorting imports ======")
-    frontend.run_suggestor_on_modified_files(import_sort_suggestor)
+    frontend.run_suggestor_on_modified_files(_import_sort_suggestor)
 
     log("======== Move complete! =======")
 
@@ -825,9 +1000,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('old_fullname')
     parser.add_argument('new_fullname')
-    parser.add_argument('-s', '--symbol', action='store_true',
-                        help=('Treat moved name as an individual symbol, '
-                              'rather than a whole module.'))
+    parser.add_argument('--no-automove', dest='automove',
+                        action='store_false', default=True,
+                        help=('Do not automatically move OLD_FULLNAME to '
+                              'NEW_FULLNAME. Callers must do that before '
+                              'running this script.'))
     parser.add_argument('-a', '--alias',
                         help=('Alias to use when adding new import lines.  '
                               'This is the module-alias, even if you are '
@@ -839,17 +1016,12 @@ def main():
     parser.add_argument('-v', '--verbose', action='store_true',
                         help="Print some information about what we're doing.")
     parsed_args = parser.parse_args()
-    # TODO(benkraft): Allow specifying what paths to operate on.
-    # TODO(benkraft): Allow specifying explicitly what to import, so we can
-    # import a symbol (although KA never wants to do that).
-    if parsed_args.symbol:
-        name_to_import, _ = parsed_args.new_fullname.rsplit('.', 1)
-    else:
-        name_to_import = parsed_args.new_fullname
 
     make_fixes(
         parsed_args.old_fullname, parsed_args.new_fullname, name_to_import,
-        import_alias=parsed_args.alias, project_root=parsed_args.root,
+        import_alias=parsed_args.alias,
+        project_root=parsed_args.root,
+        automove=parsed_args.automove,
         verbose=parsed_args.verbose)
 
 

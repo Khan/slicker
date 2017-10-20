@@ -312,6 +312,8 @@ class RootTest(unittest.TestCase):
     def test_root(self):
         shutil.copyfile('testdata/simple_in.py',
                         os.path.join(self.tmpdir, 'in.py'))
+        with open(os.path.join(self.tmpdir, 'foo.py'), 'w') as f:
+            print >>f, "def some_function(): return 4"
 
         slicker.make_fixes('foo.some_function', 'bar.new_name', 'bar',
                            project_root=self.tmpdir)
@@ -323,7 +325,119 @@ class RootTest(unittest.TestCase):
         self.assertMultiLineEqual(expected_body, actual_body)
 
 
-class FullFileTest(unittest.TestCase):
+class MoveSuggestorTest(unittest.TestCase):
+    maxDiff = None
+
+    def setUp(self):
+        self.tmpdir = os.path.realpath(
+            tempfile.mkdtemp(prefix=(self.__class__.__name__ + '.')))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir)
+
+    def join(self, *args):
+        return os.path.join(self.tmpdir, *args)
+
+    def write_file(self, filename, contents):
+        if not os.path.exists(self.join(os.path.dirname(filename))):
+            os.makedirs(os.path.dirname(self.join(filename)))
+        with open(self.join(filename), 'w') as f:
+            f.write(contents)
+
+    def assertFileIs(self, filename, expected):
+        with open(self.join(filename)) as f:
+            actual = f.read()
+        self.assertMultiLineEqual(expected, actual)
+
+    def assertFileIsNot(self, filename):
+        self.assertFalse(os.path.exists(self.join(filename)))
+
+    def test_move_module_within_directory(self):
+        self.write_file('foo.py', 'def myfunc(): return 4\n')
+        self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
+        slicker.make_fixes('foo', 'baz', 'baz',
+                           project_root=self.tmpdir)
+        self.assertFileIs('baz.py', 'def myfunc(): return 4\n')
+        self.assertFileIs('bar.py', 'import baz\n\nbaz.myfunc()\n')
+        self.assertFileIsNot('foo.py')
+
+    def test_move_module_to_a_new_directory(self):
+        self.write_file('foo.py', 'def myfunc(): return 4\n')
+        self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
+        slicker.make_fixes('foo', 'baz.bang', 'baz.bang',
+                           project_root=self.tmpdir)
+        self.assertFileIs('baz/bang.py', 'def myfunc(): return 4\n')
+        self.assertFileIs('bar.py', 'import baz.bang\n\nbaz.bang.myfunc()\n')
+        self.assertFileIsNot('foo.py')
+
+    def test_move_module_to_an_existing_directory(self):
+        self.write_file('foo.py', 'def myfunc(): return 4\n')
+        self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
+        self.write_file('baz/__init__.py', '')
+        slicker.make_fixes('foo', 'baz', 'baz.foo',
+                           project_root=self.tmpdir)
+        self.assertFileIs('baz/foo.py', 'def myfunc(): return 4\n')
+        self.assertFileIs('bar.py', 'import baz.foo\n\nbaz.foo.myfunc()\n')
+        self.assertFileIsNot('foo.py')
+
+    def test_move_module_out_of_a_directory(self):
+        self.write_file('foo/__init__.py', '')
+        self.write_file('foo/bar.py', 'def myfunc(): return 4\n')
+        self.write_file('baz.py', 'import foo.bar\n\nfoo.bar.myfunc()\n')
+        slicker.make_fixes('foo.bar', 'bang', 'bang',
+                           project_root=self.tmpdir)
+        self.assertFileIs('bang.py', 'def myfunc(): return 4\n')
+        self.assertFileIs('baz.py', 'import bang\n\nbang.myfunc()\n')
+        self.assertFileIsNot('foo/bar.py')
+        # TODO(csilvers): assert that the whole dir `foo` has gone away.
+
+    def test_move_module_to_existing_name(self):
+        self.write_file('foo.py', 'def myfunc(): return 4\n')
+        self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
+        with self.assertRaises(ValueError):
+            slicker.make_fixes('foo', 'bar', 'bar',
+                               project_root=self.tmpdir)
+
+    def test_move_package(self):
+        self.write_file('foo/__init__.py', '')
+        self.write_file('foo/bar.py', 'def myfunc(): return 4\n')
+        self.write_file('foo/baz.py', 'def myfunc(): return 5\n')
+        self.write_file('foo/bang/__init__.py', '')
+        self.write_file('foo/bang/qux.py', 'qux = True\n')
+        self.write_file('toplevel.py',
+                        ('import foo.bar\nimport foo.baz\n'
+                         'import foo.bang.qux\n\n'
+                         'return foo.bar.val + foo.baz.val +'
+                         ' foo.bang.qux.qux\n'))
+        slicker.make_fixes('foo', 'newfoo', 'newfoo',
+                           project_root=self.tmpdir)
+        self.assertFileIs('newfoo/__init__.py', '')
+        self.assertFileIs('newfoo/bar.py', 'def myfunc(): return 4\n')
+        self.assertFileIs('newfoo/baz.py', 'def myfunc(): return 5\n')
+        self.assertFileIs('newfoo/bang/__init__.py', '')
+        self.assertFileIs('newfoo/bang/qux.py', 'qux = True\n')
+        self.assertFileIs('toplevel.py',
+                          ('import newfoo.bang.qux\nimport newfoo.bar\n'
+                           'import newfoo.baz\n\n'
+                           'return newfoo.bar.val + newfoo.baz.val +'
+                           ' newfoo.bang.qux.qux\n'))
+        self.assertFileIsNot('foo/bar.py')
+        # TODO(csilvers): assert that the whole dir `foo` has gone away.
+
+    def test_move_package_to_existing_name(self):
+        self.write_file('foo/__init__.py', '')
+        self.write_file('foo/bar.py', 'def myfunc(): return 4\n')
+        self.write_file('foo/baz.py', 'def myfunc(): return 5\n')
+        self.write_file('qux/__init__.py', '')
+        slicker.make_fixes('foo', 'qux', 'qux.foo',
+                           project_root=self.tmpdir)
+        self.assertFileIs('qux/__init__.py', '')
+        self.write_file('qux/foo/__init__.py', '')
+        self.write_file('qux/foo/bar.py', 'def myfunc(): return 4\n')
+        self.write_file('qux/foo/baz.py', 'def myfunc(): return 5\n')
+
+
+class FixUsesTest(unittest.TestCase):
     maxDiff = None
 
     def run_test(self, filebase, suggestor,
@@ -337,37 +451,38 @@ class FullFileTest(unittest.TestCase):
                 output_text = f.read()
         test_frontend = khodemod.TestFrontend(input_text)
         test_frontend.run_suggestor(suggestor)
-        test_frontend.run_suggestor(slicker.import_sort_suggestor)
+        test_frontend.run_suggestor(slicker._import_sort_suggestor)
         test_frontend.do_asserts(
             self, output_text, expected_warnings, expected_error)
 
     def test_simple(self):
         self.run_test(
             'simple',
-            slicker.fix_uses_suggestor('foo.some_function',
-                                       'bar.new_name', 'bar'))
+            slicker._fix_uses_suggestor('foo.some_function',
+                                        'bar.new_name', 'bar'))
 
     def test_whole_file(self):
         self.run_test(
             'whole_file',
-            slicker.fix_uses_suggestor('foo', 'bar', 'bar'))
+            slicker._fix_uses_suggestor('foo', 'bar', 'bar'))
 
     def test_whole_file_alias(self):
         self.run_test(
             'whole_file_alias',
-            slicker.fix_uses_suggestor('foo', 'bar', 'bar', import_alias='baz'))
+            slicker._fix_uses_suggestor('foo', 'bar', 'bar',
+                                        import_alias='baz'))
 
     def test_same_prefix(self):
         self.run_test(
             'same_prefix',
-            slicker.fix_uses_suggestor('foo.bar.some_function',
-                                       'foo.baz.some_function', 'foo.baz'))
+            slicker._fix_uses_suggestor('foo.bar.some_function',
+                                        'foo.baz.some_function', 'foo.baz'))
 
     def test_implicit(self):
         self.run_test(
             'implicit',
-            slicker.fix_uses_suggestor('foo.bar.baz.some_function',
-                                       'quux.new_name', 'quux'),
+            slicker._fix_uses_suggestor('foo.bar.baz.some_function',
+                                        'quux.new_name', 'quux'),
             expected_warnings=[
                 khodemod.WarningInfo(
                     filename=khodemod.TestFrontend._FAKE_FILENAME, pos=13,
@@ -376,14 +491,14 @@ class FullFileTest(unittest.TestCase):
     def test_double_implicit(self):
         self.run_test(
             'double_implicit',
-            slicker.fix_uses_suggestor('foo.bar.baz.some_function',
-                                       'quux.new_name', 'quux'))
+            slicker._fix_uses_suggestor('foo.bar.baz.some_function',
+                                        'quux.new_name', 'quux'))
 
     def test_moving_implicit(self):
         self.run_test(
             'moving_implicit',
-            slicker.fix_uses_suggestor('foo.secrets.lulz',
-                                       'quux.new_name', 'quux'))
+            slicker._fix_uses_suggestor('foo.secrets.lulz',
+                                        'quux.new_name', 'quux'))
 
     def test_slicker(self):
         """Test on (a perhaps out of date version of) slicker itself.
@@ -393,22 +508,22 @@ class FullFileTest(unittest.TestCase):
         """
         self.run_test(
             'slicker',
-            slicker.fix_uses_suggestor('codemod',
-                                       'codemod_fork', 'codemod_fork',
-                                       import_alias='the_other_codemod'))
+            slicker._fix_uses_suggestor('codemod',
+                                        'codemod_fork', 'codemod_fork',
+                                        import_alias='the_other_codemod'))
 
     def test_linebreaks(self):
         self.run_test(
             'linebreaks',
-            slicker.fix_uses_suggestor('foo.bar.baz.some_function',
-                                       'quux.new_name', 'quux'))
+            slicker._fix_uses_suggestor('foo.bar.baz.some_function',
+                                        'quux.new_name', 'quux'))
 
     def test_conflict(self):
         self.run_test(
             'conflict',
-            slicker.fix_uses_suggestor('foo.bar.interesting_function',
-                                       'bar.interesting_function', 'bar',
-                                       import_alias='foo'),
+            slicker._fix_uses_suggestor('foo.bar.interesting_function',
+                                        'bar.interesting_function', 'bar',
+                                        import_alias='foo'),
             expected_error=khodemod.FatalError(
                 khodemod.TestFrontend._FAKE_FILENAME, 0,
                 'Your alias will conflict with imports in this file.'))
@@ -416,9 +531,9 @@ class FullFileTest(unittest.TestCase):
     def test_conflict_2(self):
         self.run_test(
             'conflict_2',
-            slicker.fix_uses_suggestor('bar.interesting_function',
-                                       'foo.bar.interesting_function',
-                                       'foo.bar'),
+            slicker._fix_uses_suggestor('bar.interesting_function',
+                                        'foo.bar.interesting_function',
+                                        'foo.bar'),
             expected_error=khodemod.FatalError(
                 khodemod.TestFrontend._FAKE_FILENAME, 0,
                 'Your alias will conflict with imports in this file.'))
@@ -426,8 +541,8 @@ class FullFileTest(unittest.TestCase):
     def test_unused(self):
         self.run_test(
             'unused',
-            slicker.fix_uses_suggestor('foo.bar.some_function',
-                                       'quux.some_function', 'quux'),
+            slicker._fix_uses_suggestor('foo.bar.some_function',
+                                        'quux.some_function', 'quux'),
             expected_warnings=[
                 khodemod.WarningInfo(
                     filename=khodemod.TestFrontend._FAKE_FILENAME, pos=49,
@@ -436,30 +551,30 @@ class FullFileTest(unittest.TestCase):
     def test_many_imports(self):
         self.run_test(
             'many_imports',
-            slicker.fix_uses_suggestor('foo.quux.replaceme',
-                                       'baz.replaced', 'baz'))
+            slicker._fix_uses_suggestor('foo.quux.replaceme',
+                                        'baz.replaced', 'baz'))
 
     def test_late_import(self):
         self.run_test(
             'late_import',
-            slicker.fix_uses_suggestor('foo.bar.some_function',
-                                       'quux.some_function', 'quux'))
+            slicker._fix_uses_suggestor('foo.bar.some_function',
+                                        'quux.some_function', 'quux'))
 
     def test_mock(self):
         self.run_test(
             'mock',
-            slicker.fix_uses_suggestor('foo.bar.some_function',
-                                       'quux.some_function', 'quux'))
+            slicker._fix_uses_suggestor('foo.bar.some_function',
+                                        'quux.some_function', 'quux'))
 
     def test_comments(self):
         self.run_test(
             'comments',
-            slicker.fix_uses_suggestor('foo.bar.some_function',
-                                       'quux.mod.some_function', 'quux.mod',
-                                       import_alias='al'))
+            slicker._fix_uses_suggestor('foo.bar.some_function',
+                                        'quux.mod.some_function', 'quux.mod',
+                                        import_alias='al'))
 
     def test_comments_whole_file(self):
         self.run_test(
             'comments_whole_file',
-            slicker.fix_uses_suggestor('foo.bar', 'quux.mod', 'quux.mod',
-                                       import_alias='al'))
+            slicker._fix_uses_suggestor('foo.bar', 'quux.mod', 'quux.mod',
+                                        import_alias='al'))
