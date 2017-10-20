@@ -66,12 +66,12 @@ def _re_for_name(name):
 
 def _filename_for_module_name(module_name):
     """filename is relative to a sys.path entry, such as your project-root."""
-    return '%s.py' % module_name.replace('.', '/')
+    return '%s.py' % module_name.replace('.', os.sep)
 
 
 def _module_name_for_filename(filename):
     """filename is relative to a sys.path entry, such as your project-root."""
-    return os.path.splitext(filename)[0].replace('/', '.')
+    return os.path.splitext(filename)[0].replace(os.sep, '.')
 
 
 def _dotted_starts_with(string, prefix):
