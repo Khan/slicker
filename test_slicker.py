@@ -451,7 +451,7 @@ class FixUsesTest(unittest.TestCase):
                 output_text = f.read()
         test_frontend = khodemod.TestFrontend(input_text)
         test_frontend.run_suggestor(suggestor)
-        test_frontend.run_suggestor(slicker._import_sort_suggestor)
+        test_frontend.run_suggestor(slicker._import_sort_suggestor('.'))
         test_frontend.do_asserts(
             self, output_text, expected_warnings, expected_error)
 
@@ -578,3 +578,35 @@ class FixUsesTest(unittest.TestCase):
             'comments_whole_file',
             slicker._fix_uses_suggestor('foo.bar', 'quux.mod', 'quux.mod',
                                         import_alias='al'))
+
+
+class ImportSortTest(unittest.TestCase):
+    maxDiff = None
+
+    def setUp(self):
+        self.tmpdir = os.path.realpath(
+            tempfile.mkdtemp(prefix=(self.__class__.__name__ + '.')))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir)
+
+    def test_third_party_sorting(self):
+        infile = 'testdata/third_party_sorting_in.py'
+        outfile = 'testdata/third_party_sorting_out.py'
+        with open(infile) as f:
+            input_text = f.read()
+
+        shutil.copyfile(infile, os.path.join(self.tmpdir, 'in.py'))
+        os.mkdir(os.path.join(self.tmpdir, 'third_party'))
+        for f in ('mycode1.py', 'mycode2.py',
+                  'third_party/__init__.py', 'third_party/slicker.py'):
+            with open(os.path.join(self.tmpdir, f), 'w') as f:
+                print >>f, '# A file'
+
+        slicker.make_fixes('in', 'out', 'out', project_root=self.tmpdir)
+
+        with open(os.path.join(self.tmpdir, 'out.py')) as f:
+            actual = f.read()
+        with open(outfile) as f:
+            expected = f.read()
+        self.assertMultiLineEqual(expected, actual)

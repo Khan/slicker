@@ -40,16 +40,10 @@ import sys
 import tokenize
 
 import asttokens
+import fix_python_imports
 
 import inputs
 import khodemod
-
-# After importing everything else, but before importing fix_python_imports, we
-# want to add cwd to the python path, so that fix_python_imports can find what
-# modules are third-party correctly.
-# TODO(benkraft): refactor fix_python_imports so this is easier.
-sys.path.insert(0, os.getcwd())
-import fix_python_imports
 
 
 def _re_for_name(name):
@@ -95,7 +89,9 @@ def _dotted_prefixes(string):
 
 class FakeOptions(object):
     """A fake `options` object to pass in to fix_python_imports."""
-    safe_headers = True
+    def __init__(self, project_root):
+        self.safe_headers = True
+        self.root = project_root
 
 
 # Import: an import in the file (or a part thereof, if commas are used).
@@ -811,32 +807,45 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
     return suggestor
 
 
-def _import_sort_suggestor(filename, body):
-    """Suggestor to fix up imports in a file. `filename` relative to --root."""
-    # TODO(benkraft): merge this with the import-adding, so we just show
-    # one diff to add in the right place, unless there is additional
-    # sorting to do.
-    # Now call out to fix_python_imports to do the import-sorting
-    change_record = fix_python_imports.ChangeRecord('fake_file.py')
+def _import_sort_suggestor(project_root):
+    """Suggestor to fix up imports in a file."""
+    fix_imports_flags = FakeOptions(project_root)
 
-    # A modified version of fix_python_imports.GetFixedFile
-    file_line_infos = fix_python_imports.ParseOneFile(
-        body, change_record)
-    fixed_lines = fix_python_imports.FixFileLines(
-        change_record, file_line_infos, FakeOptions())
+    def suggestor(filename, body):
+        """`filename` relative to project_root."""
+        # TODO(benkraft): merge this with the import-adding, so we just show
+        # one diff to add in the right place, unless there is additional
+        # sorting to do.
+        # Now call out to fix_python_imports to do the import-sorting
+        change_record = fix_python_imports.ChangeRecord('fake_file.py')
 
-    if fixed_lines is None:
-        return
-    fixed_body = ''.join(['%s\n' % line for line in fixed_lines
-                          if line is not None])
-    if fixed_body == body:
-        return
+        # A modified version of fix_python_imports.GetFixedFile
+        # NOTE: fix_python_imports needs the rootdir to be on the
+        # path so it can figure out third-party deps correctly.
+        # (That's in addition to having it be in FakeOptions, sigh.)
+        try:
+            sys.path.insert(0, os.path.abspath(project_root))
+            file_line_infos = fix_python_imports.ParseOneFile(
+                body, change_record)
+            fixed_lines = fix_python_imports.FixFileLines(
+                change_record, file_line_infos, fix_imports_flags)
+        finally:
+            del sys.path[0]
 
-    diffs = difflib.SequenceMatcher(None, body, fixed_body).get_opcodes()
-    for op, i1, i2, j1, j2 in diffs:
-        if op != 'equal':
-            yield khodemod.Patch(filename,
-                                 body[i1:i2], fixed_body[j1:j2], i1, i2)
+        if fixed_lines is None:
+            return
+        fixed_body = ''.join(['%s\n' % line for line in fixed_lines
+                              if line is not None])
+        if fixed_body == body:
+            return
+
+        diffs = difflib.SequenceMatcher(None, body, fixed_body).get_opcodes()
+        for op, i1, i2, j1, j2 in diffs:
+            if op != 'equal':
+                yield khodemod.Patch(filename,
+                                     body[i1:i2], fixed_body[j1:j2], i1, i2)
+
+    return suggestor
 
 
 def make_fixes(old_fullname, new_fullname, name_to_import, import_alias=None,
@@ -875,7 +884,8 @@ def make_fixes(old_fullname, new_fullname, name_to_import, import_alias=None,
         frontend.run_suggestor(fix_uses_suggestor, root=project_root)
 
     log("====== Resorting imports ======")
-    frontend.run_suggestor_on_modified_files(_import_sort_suggestor)
+    import_sort_suggestor = _import_sort_suggestor(project_root)
+    frontend.run_suggestor_on_modified_files(import_sort_suggestor)
 
     log("======== Move complete! =======")
 
