@@ -74,6 +74,11 @@ class FatalError(RuntimeError):
                 self.message == other.message)
 
 
+def emit(txt):
+    """This is a function so tests can override it."""
+    print txt
+
+
 def extensions_path_filter(extensions, include_extensionless=False):
     if extensions == '*':
         return lambda path: True
@@ -111,6 +116,31 @@ def default_path_filter(extensions=DEFAULT_EXTENSIONS,
         dotfiles_path_filter(),
         exclude_paths_filter(exclude_paths),
     ])
+
+
+def read_file(root, filename):
+    """Return file contents, or None if the file is not found.
+
+    filename is taken relative to root.
+    """
+    # TODO(benkraft): Cache contents.
+    try:
+        with open(os.path.join(root, filename)) as f:
+            return f.read()
+    except IOError as e:
+        if e.errno == 2:    # No such file
+            return None     # empty file
+        raise
+
+
+def resolve_paths(path_filter, root='.'):
+    """All files under root (relative to root), ignoring filtered files."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        # TODO(benkraft): Avoid traversing excluded directories.
+        for name in filenames:
+            relname = os.path.relpath(os.path.join(dirpath, name), root)
+            if path_filter(relname):
+                yield relname
 
 
 def pos_to_line_col(text, pos):
@@ -169,26 +199,12 @@ class Frontend(object):
         """Accept a fatal error, and tell the user we'll skip this file."""
         raise NotImplementedError("Subclasses must override.")
 
-    # TODO(csilvers): make read_file and write_file and resolve_paths
-    # global functions instead of Frontend objects, and have tests mock
-    # them out rather than using a different acceptor.
-
-    def read_file(self, root, filename):
-        """Return file contents, or None if the file is not found.
-
-        filename is taken relative to root.
-        """
-        # TODO(benkraft): Cache contents.
-        try:
-            with open(os.path.join(root, filename)) as f:
-                return f.read()
-        except IOError as e:
-            if e.errno == 2:    # No such file
-                return None     # empty file
-            raise
-
     def write_file(self, root, filename, text):
-        """filename is taken to be relative to root."""
+        """filename is taken to be relative to root.
+
+        Note you need a Frontend to write files (so we can update the
+        list of modified files), but not to read them.
+        """
         abspath = os.path.abspath(os.path.join(root, filename))
         if text is None:    # it means we want to delete filename
             try:
@@ -207,15 +223,6 @@ class Frontend(object):
                 f.write(text)
                 self._modified_files.add((root, filename))
 
-    def resolve_paths(self, path_filter, root='.'):
-        """All files under root (relative to root), ignoring filtered files."""
-        for dirpath, dirnames, filenames in os.walk(root):
-            # TODO(benkraft): Avoid traversing excluded directories.
-            for name in filenames:
-                relname = os.path.relpath(os.path.join(dirpath, name), root)
-                if path_filter(relname):
-                    yield relname
-
     def progress_bar(self, paths):
         """Return the passed iterable of paths, and perhaps update progress.
 
@@ -228,7 +235,7 @@ class Frontend(object):
         try:
             # Ensure the entire suggestor runs before we start patching.
             vals = list(
-                suggestor(filename, self.read_file(root, filename) or ''))
+                suggestor(filename, read_file(root, filename) or ''))
             patches = [p for p in vals if isinstance(p, Patch)
                        and p.old != p.new]
             # HACK: consider addition-ish before deletion-ish.
@@ -264,7 +271,7 @@ class Frontend(object):
 
     def run_suggestor(self, suggestor,
                       path_filter=default_path_filter(), root='.'):
-        filenames = self.resolve_paths(path_filter, root)
+        filenames = resolve_paths(path_filter, root)
         for filename in self.progress_bar(filenames):
             self._run_suggestor_on_file(suggestor, root, filename)
 
@@ -296,7 +303,7 @@ class AcceptingFrontend(Frontend):
             return paths
 
     def handle_patches(self, root, filename, patches):
-        body = self.read_file(root, filename)
+        body = read_file(root, filename)
         # We operate in reverse order to avoid having to keep track of changing
         # offsets.
         new_body = body or ''
@@ -307,55 +314,17 @@ class AcceptingFrontend(Frontend):
             self.write_file(root, filename, new_body)
 
     def handle_warnings(self, root, filename, warnings):
-        body = self.read_file(root, filename) or ''
+        body = read_file(root, filename) or ''
         for warning in warnings:
             assert filename == warning.filename, warning
             lineno, _ = pos_to_line_col(body, warning.pos)
             line = body.splitlines()[lineno]
-            print "WARNING:%s\n    on %s:%s --> %s" % (
-                warning.message, filename, lineno, line)
+            emit("WARNING:%s\n    on %s:%s --> %s"
+                 % (warning.message, filename, lineno, line))
 
     def handle_error(self, root, error):
-        body = self.read_file(root, error.filename) or ''
+        body = read_file(root, error.filename) or ''
         lineno, _ = pos_to_line_col(body, error.pos)
         line = body.splitlines()[lineno]
-        print "ERROR:%s\n    on %s:%s --> %s" % (
-            error.message, error.filename, lineno, line)
-
-
-class TestFrontend(Frontend):
-    """A frontend for test-harnessing."""
-    _FAKE_FILENAME = '__fake_file__'
-
-    def __init__(self, input_text):
-        self.body = input_text
-        self.warnings = ()
-        self.error = None
-
-    def resolve_paths(self, path_filter, root):
-        return [self._FAKE_FILENAME]
-
-    def handle_patches(self, root, filename, patches):
-        assert filename == self._FAKE_FILENAME
-        for patch in reversed(patches):
-            self.body = patch.apply_to(self.body)
-
-    def handle_warnings(self, root, filename, warnings):
-        assert filename == self._FAKE_FILENAME
-        self.warnings = warnings
-
-    def handle_error(self, root, error):
-        assert error.filename == self._FAKE_FILENAME
-        self.error = error
-
-    def read_file(self, root, filename):
-        assert filename == self._FAKE_FILENAME
-        return self.body
-
-    def do_asserts(self, testcase, expected_body=None,
-                   expected_warnings=(), expected_error=None):
-        if expected_error or self.error:
-            testcase.assertEqual(self.error, expected_error)
-        else:
-            testcase.assertEqual(self.warnings, expected_warnings)
-            testcase.assertMultiLineEqual(self.body, expected_body)
+        emit("ERROR:%s\n    on %s:%s --> %s"
+             % (error.message, error.filename, lineno, line))

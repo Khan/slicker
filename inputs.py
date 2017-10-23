@@ -39,7 +39,7 @@ def _module_name_for_filename(filename):
 
 
 def expand_and_normalize(project_root, old_fullname, new_fullname,
-                         frontend, path_filter=khodemod.default_path_filter()):
+                         path_filter=khodemod.default_path_filter()):
     """Yield a list of old-new-info triples that effect the requested rename.
 
     In the simple case old_fullname is a module and new_fullname is a
@@ -91,7 +91,7 @@ def expand_and_normalize(project_root, old_fullname, new_fullname,
     def _modules_under(package_name):
         """Yield module-names relative to package_name-root."""
         package_dir = os.path.dirname(filename_for(package_name + '.__init__'))
-        for path in frontend.resolve_paths(path_filter, root=package_dir):
+        for path in khodemod.resolve_paths(path_filter, root=package_dir):
             yield _module_name_for_filename(path)
 
     old_type = _fullname_type(old_fullname)

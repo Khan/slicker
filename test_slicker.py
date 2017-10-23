@@ -5,8 +5,40 @@ import tempfile
 import unittest
 
 import khodemod
-
 import slicker
+
+
+class TestBase(unittest.TestCase):
+    maxDiff = None
+
+    def setUp(self):
+        self.tmpdir = os.path.realpath(
+            tempfile.mkdtemp(prefix=(self.__class__.__name__ + '.')))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir)
+
+    def join(self, *args):
+        return os.path.join(self.tmpdir, *args)
+
+    def copy_file(self, filename):
+        """Copy a file from testdata to tmpdir."""
+        shutil.copyfile(os.path.join('testdata', filename),
+                        os.path.join(self.tmpdir, filename))
+
+    def write_file(self, filename, contents):
+        if not os.path.exists(self.join(os.path.dirname(filename))):
+            os.makedirs(os.path.dirname(self.join(filename)))
+        with open(self.join(filename), 'w') as f:
+            f.write(contents)
+
+    def assertFileIs(self, filename, expected):
+        with open(self.join(filename)) as f:
+            actual = f.read()
+        self.assertMultiLineEqual(expected, actual)
+
+    def assertFileIsNot(self, filename):
+        self.assertFalse(os.path.exists(self.join(filename)))
 
 
 class DetermineLocalnamesTest(unittest.TestCase):
@@ -299,59 +331,23 @@ class NamesStartingWithTest(unittest.TestCase):
             {'a.b', 'a.c', 'a.d', 'a.e', 'a.f', 'a.g'})
 
 
-class RootTest(unittest.TestCase):
-    maxDiff = None
-
-    def setUp(self):
-        self.tmpdir = os.path.realpath(
-            tempfile.mkdtemp(prefix=(self.__class__.__name__ + '.')))
-
-    def tearDown(self):
-        shutil.rmtree(self.tmpdir)
-
+class RootTest(TestBase):
     def test_root(self):
-        shutil.copyfile('testdata/simple_in.py',
-                        os.path.join(self.tmpdir, 'in.py'))
-        with open(os.path.join(self.tmpdir, 'foo.py'), 'w') as f:
+        self.copy_file('simple_in.py')
+        with open(self.join('foo.py'), 'w') as f:
             print >>f, "def some_function(): return 4"
 
         slicker.make_fixes('foo.some_function', 'bar.new_name', 'bar',
                            project_root=self.tmpdir)
 
+        with open(self.join('simple_in.py')) as f:
+            actual_body = f.read()
         with open('testdata/simple_out.py') as f:
             expected_body = f.read()
-        with open(os.path.join(self.tmpdir, 'in.py')) as f:
-            actual_body = f.read()
         self.assertMultiLineEqual(expected_body, actual_body)
 
 
-class MoveSuggestorTest(unittest.TestCase):
-    maxDiff = None
-
-    def setUp(self):
-        self.tmpdir = os.path.realpath(
-            tempfile.mkdtemp(prefix=(self.__class__.__name__ + '.')))
-
-    def tearDown(self):
-        shutil.rmtree(self.tmpdir)
-
-    def join(self, *args):
-        return os.path.join(self.tmpdir, *args)
-
-    def write_file(self, filename, contents):
-        if not os.path.exists(self.join(os.path.dirname(filename))):
-            os.makedirs(os.path.dirname(self.join(filename)))
-        with open(self.join(filename), 'w') as f:
-            f.write(contents)
-
-    def assertFileIs(self, filename, expected):
-        with open(self.join(filename)) as f:
-            actual = f.read()
-        self.assertMultiLineEqual(expected, actual)
-
-    def assertFileIsNot(self, filename):
-        self.assertFalse(os.path.exists(self.join(filename)))
-
+class MoveSuggestorTest(TestBase):
     def test_move_module_within_directory(self):
         self.write_file('foo.py', 'def myfunc(): return 4\n')
         self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
@@ -437,68 +433,88 @@ class MoveSuggestorTest(unittest.TestCase):
         self.write_file('qux/foo/baz.py', 'def myfunc(): return 5\n')
 
 
-class FixUsesTest(unittest.TestCase):
-    maxDiff = None
-
-    def run_test(self, filebase, suggestor,
+class FixUsesTest(TestBase):
+    def run_test(self, filebase, old_fullname, new_fullname,
+                 name_to_import, import_alias=None,
                  expected_warnings=(), expected_error=None):
-        with open('testdata/%s_in.py' % filebase) as f:
-            input_text = f.read()
         if expected_error:
-            output_text = None
+            expected = None
         else:
             with open('testdata/%s_out.py' % filebase) as f:
-                output_text = f.read()
-        test_frontend = khodemod.TestFrontend(input_text)
-        test_frontend.run_suggestor(suggestor)
-        test_frontend.run_suggestor(slicker._import_sort_suggestor('.'))
-        test_frontend.do_asserts(
-            self, output_text, expected_warnings, expected_error)
+                expected = f.read()
+
+        self.copy_file('%s_in.py' % filebase)
+
+        # Poor-man's mock.
+        self.error_output = []
+        old_emit = khodemod.emit
+        khodemod.emit = lambda txt: self.error_output.append(txt)
+        try:
+            slicker.make_fixes(old_fullname, new_fullname, name_to_import,
+                               import_alias, project_root=self.tmpdir)
+        finally:
+            khodemod.emit = old_emit
+
+        with open(self.join('%s_in.py' % filebase)) as f:
+            actual = f.read()
+
+        if expected:
+            self.assertMultiLineEqual(expected, actual)
+        else:
+            self.assertItemsEqual([expected_error], self.error_output)
+        if expected_warnings:
+            self.assertItemsEqual(expected_warnings, self.error_output)
+
+    def create_module(self, module_name):
+        abspath = self.join(module_name.replace('.', os.sep) + '.py')
+        if not os.path.exists(os.path.dirname(abspath)):
+            os.makedirs(os.path.dirname(abspath))
+        with open(abspath, 'w') as f:
+            print >>f, "# A file"
 
     def test_simple(self):
+        self.create_module('foo')
         self.run_test(
             'simple',
-            slicker._fix_uses_suggestor('foo.some_function',
-                                        'bar.new_name', 'bar'))
+            'foo.some_function', 'bar.new_name', 'bar')
 
     def test_whole_file(self):
+        self.create_module('foo')
         self.run_test(
             'whole_file',
-            slicker._fix_uses_suggestor('foo', 'bar', 'bar'))
+            'foo', 'bar', 'bar')
 
     def test_whole_file_alias(self):
+        self.create_module('foo')
         self.run_test(
             'whole_file_alias',
-            slicker._fix_uses_suggestor('foo', 'bar', 'bar',
-                                        import_alias='baz'))
+            'foo', 'bar', 'bar', import_alias='baz')
 
     def test_same_prefix(self):
+        self.create_module('foo.bar')
         self.run_test(
             'same_prefix',
-            slicker._fix_uses_suggestor('foo.bar.some_function',
-                                        'foo.baz.some_function', 'foo.baz'))
+            'foo.bar.some_function', 'foo.baz.some_function', 'foo.baz')
 
     def test_implicit(self):
+        self.create_module('foo.bar.baz')
         self.run_test(
             'implicit',
-            slicker._fix_uses_suggestor('foo.bar.baz.some_function',
-                                        'quux.new_name', 'quux'),
-            expected_warnings=[
-                khodemod.WarningInfo(
-                    filename=khodemod.TestFrontend._FAKE_FILENAME, pos=13,
-                    message='This import may be used implicitly.')])
+            'foo.bar.baz.some_function', 'quux.new_name', 'quux',
+            expected_warnings=['WARNING:This import may be used implicitly.\n'
+                               '    on implicit_in.py:2 --> '])
 
     def test_double_implicit(self):
+        self.create_module('foo.bar.baz')
         self.run_test(
             'double_implicit',
-            slicker._fix_uses_suggestor('foo.bar.baz.some_function',
-                                        'quux.new_name', 'quux'))
+            'foo.bar.baz.some_function', 'quux.new_name', 'quux')
 
     def test_moving_implicit(self):
+        self.create_module('foo.secrets')
         self.run_test(
             'moving_implicit',
-            slicker._fix_uses_suggestor('foo.secrets.lulz',
-                                        'quux.new_name', 'quux'))
+            'foo.secrets.lulz', 'quux.new_name', 'quux')
 
     def test_slicker(self):
         """Test on (a perhaps out of date version of) slicker itself.
@@ -506,107 +522,93 @@ class FixUsesTest(unittest.TestCase):
         It doesn't do anything super fancy, but it's a decent-sized file at
         least.
         """
+        self.create_module('codemod')
         self.run_test(
             'slicker',
-            slicker._fix_uses_suggestor('codemod',
-                                        'codemod_fork', 'codemod_fork',
-                                        import_alias='the_other_codemod'))
+            'codemod', 'codemod_fork', 'codemod_fork',
+            import_alias='the_other_codemod')
 
     def test_linebreaks(self):
+        self.create_module('foo.bar.baz')
         self.run_test(
             'linebreaks',
-            slicker._fix_uses_suggestor('foo.bar.baz.some_function',
-                                        'quux.new_name', 'quux'))
+            'foo.bar.baz.some_function', 'quux.new_name', 'quux')
 
     def test_conflict(self):
+        self.create_module('foo.bar')
         self.run_test(
             'conflict',
-            slicker._fix_uses_suggestor('foo.bar.interesting_function',
-                                        'bar.interesting_function', 'bar',
-                                        import_alias='foo'),
-            expected_error=khodemod.FatalError(
-                khodemod.TestFrontend._FAKE_FILENAME, 0,
-                'Your alias will conflict with imports in this file.'))
+            'foo.bar.interesting_function', 'bar.interesting_function', 'bar',
+            import_alias='foo',
+            expected_error=(
+                'ERROR:Your alias will conflict with imports in this file.\n'
+                '    on conflict_in.py:1 --> '))
 
     def test_conflict_2(self):
+        self.create_module('bar')
         self.run_test(
             'conflict_2',
-            slicker._fix_uses_suggestor('bar.interesting_function',
-                                        'foo.bar.interesting_function',
-                                        'foo.bar'),
-            expected_error=khodemod.FatalError(
-                khodemod.TestFrontend._FAKE_FILENAME, 0,
-                'Your alias will conflict with imports in this file.'))
+            'bar.interesting_function', 'foo.bar.interesting_function',
+            'foo.bar',
+            expected_error=(
+                'ERROR:Your alias will conflict with imports in this file.\n'
+                '    on conflict_2_in.py:1 --> import bar'))
 
     def test_unused(self):
+        self.create_module('foo.bar')
         self.run_test(
             'unused',
-            slicker._fix_uses_suggestor('foo.bar.some_function',
-                                        'quux.some_function', 'quux'),
-            expected_warnings=[
-                khodemod.WarningInfo(
-                    filename=khodemod.TestFrontend._FAKE_FILENAME, pos=49,
-                    message='Not removing import with @Nolint.')])
+            'foo.bar.some_function', 'quux.some_function', 'quux',
+            expected_warnings=['WARNING:Not removing import with @Nolint.\n'
+                               '    on unused_in.py:3 --> '])
 
     def test_many_imports(self):
+        self.create_module('foo.quux')
         self.run_test(
             'many_imports',
-            slicker._fix_uses_suggestor('foo.quux.replaceme',
-                                        'baz.replaced', 'baz'))
+            'foo.quux.replaceme', 'baz.replaced', 'baz')
 
     def test_late_import(self):
+        self.create_module('foo.bar')
         self.run_test(
             'late_import',
-            slicker._fix_uses_suggestor('foo.bar.some_function',
-                                        'quux.some_function', 'quux'))
+            'foo.bar.some_function', 'quux.some_function', 'quux')
 
     def test_mock(self):
+        self.create_module('foo.bar')
         self.run_test(
             'mock',
-            slicker._fix_uses_suggestor('foo.bar.some_function',
-                                        'quux.some_function', 'quux'))
+            'foo.bar.some_function', 'quux.some_function', 'quux')
 
     def test_comments(self):
+        self.create_module('foo.bar')
         self.run_test(
             'comments',
-            slicker._fix_uses_suggestor('foo.bar.some_function',
-                                        'quux.mod.some_function', 'quux.mod',
-                                        import_alias='al'))
+            'foo.bar.some_function', 'quux.mod.some_function', 'quux.mod',
+            import_alias='al')
 
     def test_comments_whole_file(self):
+        self.create_module('foo.bar')
         self.run_test(
             'comments_whole_file',
-            slicker._fix_uses_suggestor('foo.bar', 'quux.mod', 'quux.mod',
-                                        import_alias='al'))
+            'foo.bar', 'quux.mod', 'quux.mod', import_alias='al')
 
 
-class ImportSortTest(unittest.TestCase):
-    maxDiff = None
-
-    def setUp(self):
-        self.tmpdir = os.path.realpath(
-            tempfile.mkdtemp(prefix=(self.__class__.__name__ + '.')))
-
-    def tearDown(self):
-        shutil.rmtree(self.tmpdir)
-
+class ImportSortTest(TestBase):
     def test_third_party_sorting(self):
-        infile = 'testdata/third_party_sorting_in.py'
-        outfile = 'testdata/third_party_sorting_out.py'
-        with open(infile) as f:
-            input_text = f.read()
+        self.copy_file('third_party_sorting_in.py')
 
-        shutil.copyfile(infile, os.path.join(self.tmpdir, 'in.py'))
-        os.mkdir(os.path.join(self.tmpdir, 'third_party'))
+        os.mkdir(self.join('third_party'))
         for f in ('mycode1.py', 'mycode2.py',
                   'third_party/__init__.py', 'third_party/slicker.py'):
-            with open(os.path.join(self.tmpdir, f), 'w') as f:
+            with open(self.join(f), 'w') as f:
                 print >>f, '# A file'
 
-        slicker.make_fixes('in', 'out', 'out', project_root=self.tmpdir)
+        slicker.make_fixes('third_party_sorting_in', 'out', 'out',
+                           project_root=self.tmpdir)
 
-        with open(os.path.join(self.tmpdir, 'out.py')) as f:
+        with open(self.join('out.py')) as f:
             actual = f.read()
-        with open(outfile) as f:
+        with open('testdata/third_party_sorting_out.py') as f:
             expected = f.read()
         self.assertMultiLineEqual(expected, actual)

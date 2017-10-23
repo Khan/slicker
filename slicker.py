@@ -860,7 +860,7 @@ def make_fixes(old_fullname, new_fullname, name_to_import, import_alias=None,
 
     # Return a list of (old_fullname, new_fullname) pairs that we can rename.
     old_new_fullname_pairs = inputs.expand_and_normalize(
-        project_root, old_fullname, new_fullname, frontend)
+        project_root, old_fullname, new_fullname)
 
     for (oldname, newname, is_symbol) in old_new_fullname_pairs:
         if automove:
