@@ -39,11 +39,11 @@ import re
 import sys
 import tokenize
 
-import asttokens
 import fix_python_imports
-
 import inputs
 import khodemod
+import moves
+import util
 
 
 def _re_for_name(name):
@@ -56,16 +56,6 @@ def _re_for_name(name):
     # can use this to match line-broken dotted-names inside comments too!
     return re.compile(r'(?<!\.)\b%s\b' %
                       re.escape(name).replace(r'\.', r'\s*\.\s*'))
-
-
-def _filename_for_module_name(module_name):
-    """filename is relative to a sys.path entry, such as your project-root."""
-    return '%s.py' % module_name.replace('.', os.sep)
-
-
-def _module_name_for_filename(filename):
-    """filename is relative to a sys.path entry, such as your project-root."""
-    return os.path.splitext(filename)[0].replace(os.sep, '.')
 
 
 def _dotted_starts_with(string, prefix):
@@ -85,14 +75,6 @@ def _dotted_prefixes(string):
     string_parts = string.split('.')
     for i in xrange(len(string_parts)):
         yield '.'.join(string_parts[:i + 1])
-
-
-def _is_newline(token):
-    # I think this is equivalent to doing
-    #      token.type in (tokenize.NEWLINE, tokenize.NL)
-    # TODO(benkraft): We don't really handle files with windows newlines
-    # correctly -- any newlines we add will be wrong.  Do the right thing.
-    return token.string in ('\n', '\r\n')
 
 
 class FakeOptions(object):
@@ -191,7 +173,7 @@ def _determine_localnames(fullname, file_info):
     # If the name is a specific symbol defined in the file on which we are
     # operating, we also treat the unqualified reference as a localname, with
     # null import.
-    current_module_name = _module_name_for_filename(file_info.filename)
+    current_module_name = util.module_name_for_filename(file_info.filename)
     if (_dotted_starts_with(fullname, current_module_name)
             and fullname != current_module_name):
         # Note that in this case localnames is likely empty if we get here,
@@ -314,7 +296,7 @@ def _imports_to_remove(localnames_for_old_fullname, new_localname,
            which holds those localnames which could legally occur in
            the file but may not.  (More precisely, it's a subset of
            {ln.localname for ln in localnames_for_old_fullname}.)
-        file_info: the File object.
+        file_info: the util.File object.
 
     Returns (set of imports we can remove,
              set of imports that may be used implicitly).
@@ -391,56 +373,6 @@ def _imports_to_remove(localnames_for_old_fullname, new_localname,
                 break
 
     return (removable_imports, maybe_removable_imports)
-
-
-def _get_area_for_ast_node(node, file_info, include_previous_comments):
-    """Return the start/end character offsets of the input ast-node + friends.
-
-    We include every line that node spans, as well as their ending newlines,
-    though if the last line has a semicolon we end at the semicolon.
-
-    If include_previous_comments is True, we also include all comments
-    and newlines that directly precede the given node.
-    """
-    toks = list(file_info.tokens.get_tokens(node, include_extra=True))
-    first_tok = toks[0]
-    last_tok = toks[-1]
-
-    if include_previous_comments:
-        for istart in xrange(first_tok.index - 1, -1, -1):
-            tok = file_info.tokens.tokens[istart]
-            if (tok.string and not tok.type == tokenize.COMMENT
-                    and not tok.string.isspace()):
-                break
-        else:
-            istart = -1
-    else:
-        for istart in xrange(first_tok.index - 1, -1, -1):
-            tok = file_info.tokens.tokens[istart]
-            if tok.string and (_is_newline(tok) or not tok.string.isspace()):
-                break
-        else:
-            istart = -1
-
-    # We don't want the *very* earliest newline before us to be
-    # part of our context: it's ending the previous statement.
-    if istart >= 0 and _is_newline(file_info.tokens.tokens[istart + 1]):
-        istart += 1
-
-    prev_tok_endpos = (file_info.tokens.tokens[istart].endpos
-                       if istart >= 0 else 0)
-
-    # Figure out how much of the last line to keep.
-    for tok in file_info.tokens.tokens[last_tok.index + 1:]:
-        if tok.type == tokenize.COMMENT:
-            last_tok = tok
-        elif _is_newline(tok):
-            last_tok = tok
-            break
-        else:
-            break
-
-    return (prev_tok_endpos, last_tok.endpos)
 
 
 def _replace_in_string(str_tokens, regex, replacement, file_info):
@@ -559,8 +491,8 @@ def _add_contextless_import_patch(file_info, import_text):
             last_toplevel_import = stmt
 
     if last_toplevel_import:
-        start, end = _get_area_for_ast_node(last_toplevel_import, file_info,
-                                            include_previous_comments=False)
+        start, end = util.get_area_for_ast_node(
+            last_toplevel_import, file_info, include_previous_comments=False)
         return khodemod.Patch(
             file_info.filename, '', '%s\n' % import_text, end, end)
     else:
@@ -572,7 +504,7 @@ def _add_contextless_import_patch(file_info, import_text):
         for tok in file_info.tokens.tokens:
             if not (tok.type == tokenize.COMMENT
                     or tok.type == tokenize.STRING
-                    or _is_newline(tok)):
+                    or util.is_newline(tok)):
                 pos = tok.startpos
                 break
         else:
@@ -586,159 +518,6 @@ def _add_contextless_import_patch(file_info, import_text):
             '%s\n\n\n' % import_text)
 
         return khodemod.Patch(file_info.filename, '', text_to_add, pos, pos)
-
-
-class File(object):
-    """Represents information about a file.
-
-    TODO(benkraft): Also cache things like _compute_all_imports.
-    """
-    def __init__(self, filename, body):
-        """filename is relative to the value of --root."""
-        self.filename = filename
-        self.body = body
-        self.tree = ast.parse(body)
-        self.tokens = asttokens.ASTTokens(body, tree=self.tree)
-
-
-def _move_module_suggestor(project_root, old_fullname, new_fullname):
-    """Move a module from old_fullname to new_fullname.
-
-    old_fullname and new_fullname should be dotted names.  Their paths
-    are taken to be relative to project_root.  The destination must
-    not already exist.
-    """
-    def filename_for(mod):
-        return os.path.join(project_root, _filename_for_module_name(mod))
-
-    def suggestor(filename, body):
-        new_filename = _filename_for_module_name(new_fullname)
-        old_pathname = filename_for(old_fullname)
-        new_pathname = filename_for(new_fullname)
-        if (os.path.normpath(os.path.join(project_root, filename)) !=
-                os.path.normpath(old_pathname)):
-            return
-        assert not os.path.exists(new_pathname), new_pathname
-
-        yield khodemod.Patch(filename, body, None, 0, len(body))
-        yield khodemod.Patch(new_filename, None, body, 0, 0)
-
-    return suggestor
-
-
-def _move_symbol_suggestor(project_root, old_fullname, new_fullname):
-    """Move a symbol from old_fullname to new_fullname.
-
-    old_fullname and new_fullname should both be dotted names of
-    the form module.symbol.  The destination fullname should not
-    already exist (though the destination module may).
-    """
-    def suggestor(filename, body):
-        try:
-            file_info = File(filename, body)
-        except Exception as e:
-            raise khodemod.FatalError(filename, 0,
-                                      "Couldn't parse this file: %s" % e)
-
-        (old_module, old_symbol) = old_fullname.rsplit('.', 1)
-        (new_module, new_symbol) = new_fullname.rsplit('.', 1)
-
-        if filename != _filename_for_module_name(old_module):
-            return
-
-        # Find where old_fullname is defined in old_module.
-        # TODO(csilvers): traverse try/except, for, etc, and complain
-        # if we see the symbol defined inside there.
-        # TODO(csilvers): look for ast.AugAssign and complain if our
-        # symbol is in there.
-        for top_level_stmt in file_info.tree.body:
-            if isinstance(top_level_stmt, (ast.FunctionDef, ast.ClassDef)):
-                if top_level_stmt.name == old_symbol:
-                    break
-            elif isinstance(top_level_stmt, ast.Assign):
-                # Ignore assignments like 'a, b = x, y', and 'x.y = 5'
-                if (len(top_level_stmt.targets) == 1 and
-                        isinstance(top_level_stmt.targets[0], ast.Name) and
-                        top_level_stmt.targets[0].id == old_symbol):
-                    break
-        else:
-            raise khodemod.FatalError(filename, 0,
-                                      "Could not find symbol '%s' in '%s': "
-                                      "maybe it's in a try/finally or if?"
-                                      % (old_symbol, old_module))
-
-        # Now get the startpos and endpos of this symbol's definition.
-        start, end = _get_area_for_ast_node(
-            top_level_stmt, file_info, include_previous_comments=True)
-        definition_region = body[start:end]
-
-        # Decide what text to add, which may require a rename.
-        if old_symbol == new_symbol:
-            new_definition_region = definition_region
-        else:
-            # Find the token with the name of the symbol, and update it.
-            if isinstance(top_level_stmt, (ast.FunctionDef, ast.ClassDef)):
-                for token in file_info.tokens.get_tokens(top_level_stmt):
-                    if token.string in ('def', 'class'):
-                        break
-                else:
-                    raise khodemod.FatalError(
-                        filename, 0,
-                        "Could not find symbol '%s' in "
-                        "'%s': maybe it's defined weirdly?"
-                        % (old_symbol, old_module))
-                # We want the token after the def.
-                name_token = file_info.tokens.next_token(token)
-            else:  # isinstance(top_level_stmt, ast.Assign)
-                # The name should be a single token, if we get here.
-                name_token, = list(file_info.tokens.get_tokens(
-                    top_level_stmt.targets[0]))
-
-            if name_token.string != old_symbol:
-                raise khodemod.FatalError(filename, 0,
-                                          "Could not find symbol '%s' in "
-                                          "'%s': maybe it's defined weirdly?"
-                                          % (old_symbol, old_module))
-            new_definition_region = (
-                body[start:name_token.startpos] + new_symbol
-                + body[name_token.endpos:end])
-
-        if old_module == new_module:
-            # Just patch the module in place.
-            yield khodemod.Patch(
-                filename, definition_region, new_definition_region, start, end)
-        else:
-            # We need to remove it from the old module, and add to the new.
-            if start == 0 and end == len(body):
-                # If we're removing the rest of the file, delete it.
-                yield khodemod.Patch(filename, body, None, start, end)
-            else:
-                # TODO(benrkaft): Should we check on newlines here too?
-                yield khodemod.Patch(
-                    filename, definition_region, '', start, end)
-
-            new_filename = _filename_for_module_name(new_module)
-            new_file_body = khodemod.read_file(
-                project_root, new_filename) or ''
-
-            if new_file_body:
-                # If adding to an existing file, check we have enough newlines.
-                # TODO(benkraft): Should we also remove extra newlines?
-                current_newlines = (
-                    len(new_file_body) - len(new_file_body.rstrip('\r\n'))
-                    + len(new_definition_region)
-                    - len(new_definition_region.lstrip('\r\n')))
-                if current_newlines < 3:
-                    new_definition_region = ('\n' * (3 - current_newlines)
-                                             + new_definition_region)
-
-            # Now we need to add the new symbol to new_module.
-            yield khodemod.Patch(new_filename, '', new_definition_region,
-                                 len(new_file_body), len(new_file_body))
-
-            # TODO(benkraft): Fix up imports in the new and old modules.
-
-    return suggestor
 
 
 def _fix_uses_suggestor(old_fullname, new_fullname,
@@ -764,7 +543,7 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
     def suggestor(filename, body):
         """filename is relative to the value of --root."""
         try:
-            file_info = File(filename, body)
+            file_info = util.File(filename, body)
         except Exception as e:
             raise khodemod.FatalError(filename, 0,
                                       "Couldn't parse this file: %s" % e)
@@ -843,8 +622,8 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
         # In cases where the fullname is not a module (but is instead
         # module.symbol) this will typically be a noop.
         regexes_to_check.append((
-            re.compile(re.escape(_filename_for_module_name(old_fullname))),
-            _filename_for_module_name(new_fullname)))
+            re.compile(re.escape(util.filename_for_module_name(old_fullname))),
+            util.filename_for_module_name(new_fullname)))
 
         # Strings
         for node in ast.walk(file_info.tree):
@@ -911,7 +690,7 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
             else:
                 # TODO(benkraft): Should we look at preceding comments?
                 # We end up fighting with fix_python_imports if we do.
-                start, end = _get_area_for_ast_node(
+                start, end = util.get_area_for_ast_node(
                     imp.node, file_info, include_previous_comments=False)
                 yield khodemod.Patch(filename, body[start:end], '', start, end)
 
@@ -969,7 +748,7 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
                     # we are keeping the old import, maybe don't copy it?
                     # TODO(benkraft): Should we look at preceding comments?
                     # We end up fighting with fix_python_imports if we do.
-                    start, end = _get_area_for_ast_node(
+                    start, end = util.get_area_for_ast_node(
                         imp.node, file_info, include_previous_comments=False)
                     pre_context = body[start:imp.start]
                     post_context = body[imp.end:end]
@@ -1042,10 +821,10 @@ def make_fixes(old_fullname, new_fullname, import_alias=None,
         if automove:
             log("===== Moving %s to %s =====" % (oldname, newname))
             if is_symbol:
-                move_suggestor = _move_symbol_suggestor(
+                move_suggestor = moves.move_symbol_suggestor(
                     project_root, oldname, newname)
             else:
-                move_suggestor = _move_module_suggestor(
+                move_suggestor = moves.move_module_suggestor(
                     project_root, oldname, newname)
             frontend.run_suggestor(move_suggestor, root=project_root)
 

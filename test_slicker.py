@@ -6,6 +6,7 @@ import unittest
 
 import khodemod
 import slicker
+import util
 
 
 class TestBase(unittest.TestCase):
@@ -62,14 +63,14 @@ class DetermineLocalnamesTest(unittest.TestCase):
     def test_simple(self):
         self._assert_localnames(
             slicker._determine_localnames(
-                'foo', slicker.File('some_file.py', 'import foo\n')),
+                'foo', util.File('some_file.py', 'import foo\n')),
             {('foo', 'foo', ('foo', 'foo', 0, 10))})
 
     def test_with_dots(self):
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'import foo.bar.baz\n')),
+                util.File('some_file.py', 'import foo.bar.baz\n')),
             {('foo.bar.baz', 'foo.bar.baz',
               ('foo.bar.baz', 'foo.bar.baz', 0, 18))})
 
@@ -77,34 +78,34 @@ class DetermineLocalnamesTest(unittest.TestCase):
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'from foo.bar import baz\n')),
+                util.File('some_file.py', 'from foo.bar import baz\n')),
             {('foo.bar.baz', 'baz', ('foo.bar.baz', 'baz', 0, 23))})
 
     def test_implicit_import(self):
         self._assert_localnames(
             slicker._determine_localnames(
-                'foo.bar.baz', slicker.File('some_file.py', 'import foo\n')),
+                'foo.bar.baz', util.File('some_file.py', 'import foo\n')),
             {('foo.bar.baz', 'foo.bar.baz', ('foo', 'foo', 0, 10))})
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'import foo.quux\n')),
+                util.File('some_file.py', 'import foo.quux\n')),
             {('foo.bar.baz', 'foo.bar.baz', ('foo.quux', 'foo.quux', 0, 15))})
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'import foo.bar\n')),
+                util.File('some_file.py', 'import foo.bar\n')),
             {('foo.bar.baz', 'foo.bar.baz', ('foo.bar', 'foo.bar', 0, 14))})
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'import foo.bar.quux\n')),
+                util.File('some_file.py', 'import foo.bar.quux\n')),
             {('foo.bar.baz', 'foo.bar.baz',
               ('foo.bar.quux', 'foo.bar.quux', 0, 19))})
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'import foo.bar.baz.quux\n')),
+                util.File('some_file.py', 'import foo.bar.baz.quux\n')),
             {('foo.bar.baz', 'foo.bar.baz',
               ('foo.bar.baz.quux', 'foo.bar.baz.quux', 0, 23))})
 
@@ -112,142 +113,142 @@ class DetermineLocalnamesTest(unittest.TestCase):
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'from foo.bar import quux\n')),
+                util.File('some_file.py', 'from foo.bar import quux\n')),
             set())
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'from foo import bar\n')),
+                util.File('some_file.py', 'from foo import bar\n')),
             {('foo.bar.baz', 'bar.baz', ('foo.bar', 'bar', 0, 19))})
 
     def test_as_import(self):
         self._assert_localnames(
             slicker._determine_localnames(
-                'foo', slicker.File('some_file.py', 'import foo as bar\n')),
+                'foo', util.File('some_file.py', 'import foo as bar\n')),
             {('foo', 'bar', ('foo', 'bar', 0, 17))})
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'import foo.bar.baz as quux\n')),
+                util.File('some_file.py', 'import foo.bar.baz as quux\n')),
             {('foo.bar.baz', 'quux', ('foo.bar.baz', 'quux', 0, 26))})
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py',
-                             'from foo.bar import baz as quux\n')),
+                util.File('some_file.py',
+                          'from foo.bar import baz as quux\n')),
             {('foo.bar.baz', 'quux', ('foo.bar.baz', 'quux', 0, 31))})
 
     def test_implicit_as_import(self):
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'import foo as quux\n')),
+                util.File('some_file.py', 'import foo as quux\n')),
             {('foo.bar.baz', 'quux.bar.baz', ('foo', 'quux', 0, 18))})
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'import foo.bar as quux\n')),
+                util.File('some_file.py', 'import foo.bar as quux\n')),
             {('foo.bar.baz', 'quux.baz', ('foo.bar', 'quux', 0, 22))})
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py',
-                             'import foo.bar.quux as bogus\n')),
+                util.File('some_file.py',
+                          'import foo.bar.quux as bogus\n')),
             set())
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'from foo import bar as quux\n')),
+                util.File('some_file.py', 'from foo import bar as quux\n')),
             {('foo.bar.baz', 'quux.baz', ('foo.bar', 'quux', 0, 27))})
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py',
-                             'from foo.bar import quux as bogus\n')),
+                util.File('some_file.py',
+                          'from foo.bar import quux as bogus\n')),
             set())
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py',
-                             'import foo.bar.baz.quux as bogus\n')),
+                util.File('some_file.py',
+                          'import foo.bar.baz.quux as bogus\n')),
             set())
 
     def test_other_imports(self):
         self._assert_localnames(
             slicker._determine_localnames(
-                'foo', slicker.File('some_file.py', 'import bogus\n')),
+                'foo', util.File('some_file.py', 'import bogus\n')),
             set())
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'import bogus.foo.bar.baz\n')),
+                util.File('some_file.py', 'import bogus.foo.bar.baz\n')),
             set())
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo',
-                slicker.File('some_file.py', 'from bogus import foo\n')),
+                util.File('some_file.py', 'from bogus import foo\n')),
             set())
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'from bogus import foo\n')),
+                util.File('some_file.py', 'from bogus import foo\n')),
             set())
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'from bogus import foo, bar\n')),
+                util.File('some_file.py', 'from bogus import foo, bar\n')),
             set())
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py',
-                             'from foo.bogus import bar, baz\n')),
+                util.File('some_file.py',
+                          'from foo.bogus import bar, baz\n')),
             set())
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py', 'import bar, baz\n')),
+                util.File('some_file.py', 'import bar, baz\n')),
             set())
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File('some_file.py',
-                             'import bar as foo, baz as quux\n')),
+                util.File('some_file.py',
+                          'import bar as foo, baz as quux\n')),
             set())
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo',
-                slicker.File('some_file.py',
-                             'import bogus  # (with a comment)\n')),
+                util.File('some_file.py',
+                          'import bogus  # (with a comment)\n')),
             set())
 
     def test_other_junk(self):
         self._assert_localnames(
             slicker._determine_localnames(
-                'foo', slicker.File('some_file.py', '# import foo\n')),
+                'foo', util.File('some_file.py', '# import foo\n')),
             set())
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo',
-                slicker.File('some_file.py',
-                             '                  # import foo\n')),
+                util.File('some_file.py',
+                          '                  # import foo\n')),
             set())
         self._assert_localnames(
             slicker._determine_localnames(
-                'foo', slicker.File('some_file.py', 'def foo(): pass\n')),
+                'foo', util.File('some_file.py', 'def foo(): pass\n')),
             set())
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo',
-                slicker.File('some_file.py',
-                             '"""imports are "fun" in a multiline string"""')),
+                util.File('some_file.py',
+                          '"""imports are "fun" in a multiline string"""')),
             set())
 
     def test_with_context(self):
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo',
-                slicker.File(
+                util.File(
                     'some_file.py',
                     '# import foo as bar\n'
                     'import os\n'
@@ -264,7 +265,7 @@ class DetermineLocalnamesTest(unittest.TestCase):
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.baz',
-                slicker.File(
+                util.File(
                     'some_file.py',
                     'import foo\n'
                     'import foo.bar.baz\n'
@@ -280,7 +281,7 @@ class DetermineLocalnamesTest(unittest.TestCase):
         self._assert_localnames(
             slicker._determine_localnames(
                 'foo.bar.some_function',
-                slicker.File(
+                util.File(
                     'foo/bar.py',
                     'import baz\n'
                     'def f():\n'
@@ -318,42 +319,42 @@ class DottedPrefixTest(unittest.TestCase):
 class NamesStartingWithTest(unittest.TestCase):
     def test_simple(self):
         self.assertEqual(
-            set(slicker._names_starting_with('a', slicker.File(None, 'a\n'))),
+            set(slicker._names_starting_with('a', util.File(None, 'a\n'))),
             {'a'})
         self.assertEqual(
             set(slicker._names_starting_with(
-                'a', slicker.File(None, 'a.b.c\n'))),
+                'a', util.File(None, 'a.b.c\n'))),
             {'a.b.c'})
         self.assertEqual(
             set(slicker._names_starting_with(
-                'a', slicker.File(None, 'd.e.f\n'))),
+                'a', util.File(None, 'd.e.f\n'))),
             set())
 
         self.assertEqual(
             set(slicker._names_starting_with(
-                'abc', slicker.File(None, 'abc.de\n'))),
+                'abc', util.File(None, 'abc.de\n'))),
             {'abc.de'})
         self.assertEqual(
             set(slicker._names_starting_with(
-                'ab', slicker.File(None, 'abc.de\n'))),
+                'ab', util.File(None, 'abc.de\n'))),
             set())
 
         self.assertEqual(
             set(slicker._names_starting_with(
-                'a', slicker.File(None, '"a.b.c"\n'))),
+                'a', util.File(None, '"a.b.c"\n'))),
             set())
         self.assertEqual(
             set(slicker._names_starting_with(
-                'a', slicker.File(None, 'import a.b.c\n'))),
+                'a', util.File(None, 'import a.b.c\n'))),
             set())
         self.assertEqual(
             set(slicker._names_starting_with(
-                'a', slicker.File(None, 'b.c.a.b.c\n'))),
+                'a', util.File(None, 'b.c.a.b.c\n'))),
             set())
 
     def test_in_context(self):
         self.assertEqual(
-            set(slicker._names_starting_with('a', slicker.File(
+            set(slicker._names_starting_with('a', util.File(
                 None,
                 'def abc():\n'
                 '    if a.b == a.c:\n'
@@ -377,250 +378,6 @@ class RootTest(TestBase):
         with open('testdata/simple_out.py') as f:
             expected_body = f.read()
         self.assertMultiLineEqual(expected_body, actual_body)
-
-
-class FileMoveSuggestorTest(TestBase):
-    # TODO(benkraft): Assert no warnings/errors, like FixUsesTest.
-    def test_move_module_within_directory(self):
-        self.write_file('foo.py', 'def myfunc(): return 4\n')
-        self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
-        slicker.make_fixes('foo', 'baz',
-                           project_root=self.tmpdir)
-        self.assertFileIs('baz.py', 'def myfunc(): return 4\n')
-        self.assertFileIs('bar.py', 'import baz\n\nbaz.myfunc()\n')
-        self.assertFileIsNot('foo.py')
-
-    def test_move_module_to_a_new_directory(self):
-        self.write_file('foo.py', 'def myfunc(): return 4\n')
-        self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
-        slicker.make_fixes('foo', 'baz.bang',
-                           project_root=self.tmpdir)
-        self.assertFileIs('baz/bang.py', 'def myfunc(): return 4\n')
-        self.assertFileIs('bar.py', 'import baz.bang\n\nbaz.bang.myfunc()\n')
-        self.assertFileIsNot('foo.py')
-
-    def test_move_module_to_an_existing_directory(self):
-        self.write_file('foo.py', 'def myfunc(): return 4\n')
-        self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
-        self.write_file('baz/__init__.py', '')
-        slicker.make_fixes('foo', 'baz',
-                           project_root=self.tmpdir)
-        self.assertFileIs('baz/foo.py', 'def myfunc(): return 4\n')
-        self.assertFileIs('bar.py', 'import baz.foo\n\nbaz.foo.myfunc()\n')
-        self.assertFileIsNot('foo.py')
-
-    def test_move_module_out_of_a_directory(self):
-        self.write_file('foo/__init__.py', '')
-        self.write_file('foo/bar.py', 'def myfunc(): return 4\n')
-        self.write_file('baz.py', 'import foo.bar\n\nfoo.bar.myfunc()\n')
-        slicker.make_fixes('foo.bar', 'bang',
-                           project_root=self.tmpdir)
-        self.assertFileIs('bang.py', 'def myfunc(): return 4\n')
-        self.assertFileIs('baz.py', 'import bang\n\nbang.myfunc()\n')
-        self.assertFileIsNot('foo/bar.py')
-        # TODO(csilvers): assert that the whole dir `foo` has gone away.
-
-    def test_move_module_to_existing_name(self):
-        self.write_file('foo.py', 'def myfunc(): return 4\n')
-        self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
-        with self.assertRaises(ValueError):
-            slicker.make_fixes('foo', 'bar',
-                               project_root=self.tmpdir)
-
-    def test_move_package(self):
-        self.write_file('foo/__init__.py', '')
-        self.write_file('foo/bar.py', 'def myfunc(): return 4\n')
-        self.write_file('foo/baz.py', 'def myfunc(): return 5\n')
-        self.write_file('foo/bang/__init__.py', '')
-        self.write_file('foo/bang/qux.py', 'qux = True\n')
-        self.write_file('toplevel.py',
-                        ('import foo.bar\nimport foo.baz\n'
-                         'import foo.bang.qux\n\n'
-                         'return foo.bar.val + foo.baz.val +'
-                         ' foo.bang.qux.qux\n'))
-        slicker.make_fixes('foo', 'newfoo',
-                           project_root=self.tmpdir)
-        self.assertFileIs('newfoo/__init__.py', '')
-        self.assertFileIs('newfoo/bar.py', 'def myfunc(): return 4\n')
-        self.assertFileIs('newfoo/baz.py', 'def myfunc(): return 5\n')
-        self.assertFileIs('newfoo/bang/__init__.py', '')
-        self.assertFileIs('newfoo/bang/qux.py', 'qux = True\n')
-        self.assertFileIs('toplevel.py',
-                          ('import newfoo.bang.qux\nimport newfoo.bar\n'
-                           'import newfoo.baz\n\n'
-                           'return newfoo.bar.val + newfoo.baz.val +'
-                           ' newfoo.bang.qux.qux\n'))
-        self.assertFileIsNot('foo/bar.py')
-        # TODO(csilvers): assert that the whole dir `foo` has gone away.
-
-    def test_move_package_to_existing_name(self):
-        self.write_file('foo/__init__.py', '')
-        self.write_file('foo/bar.py', 'def myfunc(): return 4\n')
-        self.write_file('foo/baz.py', 'def myfunc(): return 5\n')
-        self.write_file('qux/__init__.py', '')
-        slicker.make_fixes('foo', 'qux',
-                           project_root=self.tmpdir)
-        self.assertFileIs('qux/__init__.py', '')
-        self.write_file('qux/foo/__init__.py', '')
-        self.write_file('qux/foo/bar.py', 'def myfunc(): return 4\n')
-        self.write_file('qux/foo/baz.py', 'def myfunc(): return 5\n')
-
-
-class SymbolMoveSuggestorTest(TestBase):
-    # TODO(benkraft): Assert no warnings/errors, like FixUsesTest.
-    def test_move_function(self):
-        self.write_file('foo.py', 'def myfunc(): return 17\n')
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
-                           project_root=self.tmpdir)
-        self.assertFileIs('newfoo.py', 'def myfunc(): return 17\n')
-        self.assertFileIsNot('foo.py')
-
-    def test_move_class(self):
-        self.write_file('foo.py', 'class Classy(object): return 17\n')
-        slicker.make_fixes('foo.Classy', 'newfoo.Classy',
-                           project_root=self.tmpdir)
-        self.assertFileIs('newfoo.py', 'class Classy(object): return 17\n')
-        self.assertFileIsNot('foo.py')
-
-    def test_move_constant(self):
-        self.write_file('foo.py', 'CACHE = {}\n')
-        slicker.make_fixes('foo.CACHE', 'newfoo.CACHE',
-                           project_root=self.tmpdir)
-        self.assertFileIs('newfoo.py', 'CACHE = {}\n')
-        self.assertFileIsNot('foo.py')
-
-    def test_appending_to_existing_file(self):
-        # Note since myfunc is at the top of foo.py, and there's only one
-        # newline at the bottom of newfoo.py, this tests the case where we add
-        # newlines.
-        self.write_file('foo.py', 'def myfunc(): return 17\n')
-        self.write_file('newfoo.py',
-                        ('"""A file with the new version of foo."""\n'
-                         'import quux\n\n'
-                         'def otherfunc():\n'
-                         '    return 71\n'))
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
-                           project_root=self.tmpdir)
-        self.assertFileIs('newfoo.py',
-                          ('"""A file with the new version of foo."""\n'
-                           'import quux\n\n'
-                           'def otherfunc():\n'
-                           '    return 71\n\n\n'
-                           'def myfunc(): return 17\n'))
-        self.assertFileIsNot('foo.py')
-
-    def test_moving_with_context(self):
-        self.write_file('foo.py',
-                        ('"""A file with the old version of foo."""\n'
-                         'import quux\n\n'
-                         'def _secretfunc():\n'
-                         '    return "secretmonkeys"\n\n\n'
-                         '# Does some stuff\n'
-                         '# Be careful calling it!\n\n'
-                         'def myfunc():\n'
-                         '    """Returns a number."""\n'
-                         '    return 289\n\n\n'
-                         '# Here is another function.\n'
-                         'def otherfunc():\n'
-                         '    return 1 + 1\n'))
-        self.write_file('newfoo.py',
-                        ('"""A file with the new version of foo."""\n'
-                         'import quux\n\n'
-                         'def otherfunc():\n'
-                         '    return 71\n'))
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
-                           project_root=self.tmpdir)
-        self.assertFileIs('newfoo.py',
-                          ('"""A file with the new version of foo."""\n'
-                           'import quux\n\n'
-                           'def otherfunc():\n'
-                           '    return 71\n\n\n'
-                           '# Does some stuff\n'
-                           '# Be careful calling it!\n\n'
-                           'def myfunc():\n'
-                           '    """Returns a number."""\n'
-                           '    return 289\n'))
-        self.assertFileIs('foo.py',
-                          ('"""A file with the old version of foo."""\n'
-                           'import quux\n\n'
-                           'def _secretfunc():\n'
-                           '    return "secretmonkeys"\n\n\n'
-                           '# Here is another function.\n'
-                           'def otherfunc():\n'
-                           '    return 1 + 1\n'))
-
-    def test_renaming_function(self):
-        self.write_file('foo.py',
-                        ('def myfunc():\n'
-                         '    return 17\n'))
-        slicker.make_fixes('foo.myfunc', 'foo.mybetterfunc',
-                           project_root=self.tmpdir)
-        self.assertFileIs('foo.py',
-                          ('def mybetterfunc():\n'
-                           '    return 17\n'))
-
-    def test_renaming_decorated_function(self):
-        self.write_file('foo.py',
-                        ('@decorator\n'
-                         'def myfunc():\n'
-                         '    return 17\n'))
-        slicker.make_fixes('foo.myfunc', 'foo.mybetterfunc',
-                           project_root=self.tmpdir)
-        self.assertFileIs('foo.py',
-                          ('@decorator\n'
-                           'def mybetterfunc():\n'
-                           '    return 17\n'))
-
-    def test_renaming_new_style_class(self):
-        self.write_file('foo.py',
-                        ('class Classy(object):\n'
-                         '    return 17\n'))
-        slicker.make_fixes('foo.Classy', 'foo.Classier',
-                           project_root=self.tmpdir)
-        self.assertFileIs('foo.py',
-                          ('class Classier(object):\n'
-                           '    return 17\n'))
-
-    def test_renaming_old_style_class(self):
-        self.write_file('foo.py',
-                        ('class Classy:\n'
-                         '    return 17\n'))
-        slicker.make_fixes('foo.Classy', 'foo.Classier',
-                           project_root=self.tmpdir)
-        self.assertFileIs('foo.py',
-                          ('class Classier:\n'
-                           '    return 17\n'))
-
-    def test_renaming_decorated_class(self):
-        self.write_file('foo.py',
-                        ('@decorator\n'
-                         'class Classy(object):\n'
-                         '    return 17\n'))
-        slicker.make_fixes('foo.Classy', 'foo.Classier',
-                           project_root=self.tmpdir)
-        self.assertFileIs('foo.py',
-                          ('@decorator\n'
-                           'class Classier(object):\n'
-                           '    return 17\n'))
-
-    def test_renaming_constant(self):
-        self.write_file('foo.py', 'CACHE = {}\n')
-        slicker.make_fixes('foo.CACHE', 'foo._SECRET_CACHE',
-                           project_root=self.tmpdir)
-        self.assertFileIs('foo.py', '_SECRET_CACHE = {}\n')
-
-    def test_rename_and_move(self):
-        self.write_file('foo.py',
-                        ('# a class.\n'
-                         'class Classy(object):\n'
-                         '    return 17\n'))
-        slicker.make_fixes('foo.Classy', 'newfoo.Classier',
-                           project_root=self.tmpdir)
-        self.assertFileIs('newfoo.py',
-                          ('# a class.\n'
-                           'class Classier(object):\n'
-                           '    return 17\n'))
-        self.assertFileIsNot('foo.py')
 
 
 class FixUsesTest(TestBase):
