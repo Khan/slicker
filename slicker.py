@@ -997,7 +997,7 @@ def _import_sort_suggestor(project_root):
     return suggestor
 
 
-def make_fixes(old_fullname, new_fullname, name_to_import, import_alias=None,
+def make_fixes(old_fullname, new_fullname, import_alias=None,
                project_root='.', automove=True, verbose=False):
     """name_to_import is the module-part of new_fullname."""
     def log(msg):
@@ -1064,7 +1064,7 @@ def main():
     parsed_args = parser.parse_args()
 
     make_fixes(
-        parsed_args.old_fullname, parsed_args.new_fullname, name_to_import,
+        parsed_args.old_fullname, parsed_args.new_fullname,
         import_alias=parsed_args.alias,
         project_root=parsed_args.root,
         automove=parsed_args.automove,
