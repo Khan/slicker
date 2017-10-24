@@ -8,6 +8,8 @@ so each component is pluggable -- as well as for Khan Academy's use cases.
 TODO(benkraft): Implement a commandline interface for the regex suggestors.
 TODO(benkraft): Implement other frontends.
 """
+from __future__ import absolute_import
+
 import collections
 import os
 

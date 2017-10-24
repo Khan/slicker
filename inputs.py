@@ -21,6 +21,7 @@ forms and converts them to one of only two types of moves:
 It also does sanity-checking of the inputs, to make sure they refer
 to real objects.
 """
+from __future__ import absolute_import
 
 import os
 

@@ -29,6 +29,7 @@ High level terminology:
        import foo.bar as foo_bar
    then the "localname" while processing qux.py is "foo_bar.Importer".
 """
+from __future__ import absolute_import
 
 import argparse
 import ast
