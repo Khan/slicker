@@ -111,7 +111,8 @@ Import = collections.namedtuple(
 #   localname: the localname for this name in the current file
 #   imp: the Import that makes this name available (if "name" is for
 #        a module, then the import not only makes the name available,
-#        it *is* the name! [except in weird cases])
+#        it *is* the name! [except in weird cases]); can also be None
+#        if we are operating on the file this name was defined in.
 # So in the above example, if we were searching for foo.bar.some_function
 # in a file that had 'from foo import bar', we'd get a LocalName
 # with name='foo.bar.some_function' and localname='bar.some_function'.
@@ -164,7 +165,7 @@ def _determine_localnames(fullname, file_info):
        functions (several "late imports") you'll get one
        return-value per late-import that you do.
     """
-    imports = set()
+    localnames = set()
     for imp in _compute_all_imports(file_info):
         if imp.alias == imp.name:      # no aliases: no 'as' or 'from'
             # This deals with the python quirk in case (1) of the
@@ -173,12 +174,25 @@ def _determine_localnames(fullname, file_info):
             imported_firstpart = imp.name.split('.', 1)[0]
             fullname_firstpart = fullname.split('.', 1)[0]
             if imported_firstpart == fullname_firstpart:
-                imports.add(LocalName(fullname, fullname, imp))
+                localnames.add(LocalName(fullname, fullname, imp))
         else:                          # alias: need to replace name with alias
             if _dotted_starts_with(fullname, imp.name):
                 localname = '%s%s' % (imp.alias, fullname[len(imp.name):])
-                imports.add(LocalName(fullname, localname, imp))
-    return imports
+                localnames.add(LocalName(fullname, localname, imp))
+
+    # If the name is a specific symbol defined in the file on which we are
+    # operating, we also treat the unqualified reference as a localname, with
+    # null import.
+    current_module_name = _module_name_for_filename(file_info.filename)
+    if (_dotted_starts_with(fullname, current_module_name)
+            and fullname != current_module_name):
+        # Note that in this case localnames is likely empty if we get here,
+        # although it's not guaranteed since python lets you do `import
+        # foo.bar` in foo/bar.py, at least in some cases.
+        unqualified_name = fullname[len(current_module_name) + 1:]
+        localnames.add(LocalName(fullname, unqualified_name, None))
+
+    return localnames
 
 
 def _name_for_node(node):
@@ -306,6 +320,9 @@ def _imports_to_remove(localnames_for_old_fullname, new_localname,
     maybe_removable_imports = set()
     definitely_kept_imports = set()
     for (fullname, localname, imp) in localnames_for_old_fullname:
+        if imp is None:
+            # If this localname didn't correspond to an import, ignore it.
+            continue
         if new_localname == localname:
             # This can happen if we're moving foo.myfunc to bar.myfunc
             # and this file does 'import foo as bar; bar.myfunc()'.
@@ -519,6 +536,50 @@ def _replace_in_string(str_tokens, regex, replacement, file_info):
             deletion_start, deletion_end)
 
 
+def _add_contextless_import_patch(file_info, import_text):
+    """Add an import to the file_info, in a reasonable place.
+
+    We use this in the case where there is no particular context to copy or
+    point at which to place the import; we just want to guess something
+    reasonable -- near existing imports if any.
+
+    Yields a patch.
+    """
+    last_toplevel_import = None
+    for stmt in file_info.tree.body:
+        if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+            last_toplevel_import = stmt
+
+    if last_toplevel_import:
+        start, end = _get_area_for_ast_node(last_toplevel_import, file_info,
+                                            include_previous_comments=False)
+        return khodemod.Patch(
+            file_info.filename, '', '%s\n' % import_text, end, end)
+    else:
+        # There are no existing toplevel imports.  Find the first
+        # place to add an import: after any comments, docstrings,
+        # and newlines.  (*Not* after indents and the like!)
+        # TODO(benkraft): We should really add before trailing
+        # whitespace, but fix_pytnon_imports will mostly fix that.
+        for tok in file_info.tokens.tokens:
+            if not (tok.type == tokenize.COMMENT
+                    or tok.type == tokenize.STRING
+                    or tok.string == '\n'):
+                pos = tok.startpos
+                break
+        else:
+            # The file has no code; add at the end.
+            pos = len(file_info.body)
+
+        # We add the absolute_import because KA style requires it.
+        # (It's a good idea anyway.)
+        text_to_add = (
+            'from __future__ import absolute_import\n\n'
+            '%s\n\n\n' % import_text)
+
+        return khodemod.Patch(file_info.filename, '', text_to_add, pos, pos)
+
+
 class File(object):
     """Represents information about a file.
 
@@ -680,15 +741,16 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
         old_localnames = _determine_localnames(old_fullname, file_info)
         old_localname_strings = {ln.localname for ln in old_localnames}
 
-        # If name_to_import is already imported in this file, figure
-        # out what the localname for our symbol would be using this
-        # existing import.  That is, if we are moving 'foo.myfunc' to
-        # 'bar.myfunc' and this file already has 'import bar as baz'
-        # then existing_new_localnames would be {'baz.myfunc'}.
+        # Otherwise, if name_to_import is already imported in this
+        # file, figure out what the localname for our symbol would
+        # be using this existing import.  That is, if we are moving
+        # 'foo.myfunc' to 'bar.myfunc' and this file already has
+        # 'import bar as baz' then existing_new_localnames would be
+        # {'baz.myfunc'}.
         existing_new_localnames = {
             ln.localname
             for ln in _determine_localnames(new_fullname, file_info)
-            if name_to_import == ln.imp.name
+            if ln.imp is None or name_to_import == ln.imp.name
         }
 
         if existing_new_localnames:
@@ -831,6 +893,8 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
                 else:
                     import_stmt = 'import %s' % name_to_import
 
+            old_imports = {
+                ln.imp for ln in old_localnames if ln.imp is not None}
             # Decide where to add it.  The issue here is that we may
             # be replacing a "late import" (an import inside a
             # function) in which case we want the new import to be
@@ -838,41 +902,56 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
             # might be late-importing the same module in *several*
             # functions, and each one has to get replaced properly.
             explicit_imports = {
-                ln.imp for ln in old_localnames
+                imp for imp in old_imports
                 # TODO(benkraft): This is too weak -- we should only
                 # call an import explicit if it is of the symbol's module.
-                if _dotted_starts_with(old_fullname, ln.imp.name)}
+                if _dotted_starts_with(old_fullname, imp.name)}
 
-            if explicit_imports:
-                # If there previously existed an explicit import, we add at the
-                # location of each explicit import, and only those.
-                # TODO(benkraft): This doesn't work correctly in the case where
-                # there was an implicit toplevel import, and an explicit late
-                # import, and the moved symbol was used outside the scope of
-                # the late import.  To handle this case, we'll need to do much
-                # more careful tracing of which imports exist in which scopes.
-                add_at = explicit_imports
+            if not old_imports:
+                # We need to add a totally new toplevel import, not
+                # corresponding to an existing one.  (So we also don't
+                # need to worry about copying comments or indenting.)
+                yield _add_contextless_import_patch(file_info, import_stmt)
             else:
-                # If not, we add at the first implicit import only.
-                first_implicit_localname = min(old_localnames,
-                                               key=lambda ln: ln.imp.start)
-                add_at = {first_implicit_localname.imp}
+                # There were existing imports of the old name,
+                # so we try to match those.
+                if explicit_imports:
+                    # If there previously existed an explicit import, we add at
+                    # the location of each explicit import, and only those.
+                    # TODO(benkraft): This doesn't work correctly in the case
+                    # where there was an implicit toplevel import, and an
+                    # explicit late import, and the moved symbol was used
+                    # outside the scope of the late import.  To handle this
+                    # case, we'll need to do much more careful tracing of which
+                    # imports exist in which scopes.
+                    add_at = explicit_imports
+                else:
+                    # If not, we add at the first implicit import only.
+                    # TODO(benkraft): This is not really right if we have
+                    # multiple late implicit imports.  Maybe we should just
+                    # fallback to the "contextless" case here, since it's not
+                    # clear we can know what's right?
+                    first_implicit_import = min(old_imports,
+                                                key=lambda imp: imp.start)
+                    add_at = {first_implicit_import}
 
-            for imp in add_at:
-                # Copy the old import's context, such as opening indent
-                # and trailing newline.
-                # TODO(benkraft): If the context we copy is a comment, and we
-                # are keeping the old import, maybe don't copy it?
-                # TODO(benkraft): Should we look at preceding comments?
-                # We end up fighting with fix_python_imports if we do.
-                start, end = _get_area_for_ast_node(
-                    imp.node, file_info, include_previous_comments=False)
-                pre_context = body[start:imp.start]
-                post_context = body[imp.end:end]
-                # Now we can add the new import and have the same context
-                # as the import we are taking the place of!
-                text_to_add = ''.join([pre_context, import_stmt, post_context])
-                yield khodemod.Patch(filename, '', text_to_add, start, start)
+                for imp in add_at:
+                    # Copy the old import's context, such as opening indent
+                    # and trailing newline.
+                    # TODO(benkraft): If the context we copy is a comment, and
+                    # we are keeping the old import, maybe don't copy it?
+                    # TODO(benkraft): Should we look at preceding comments?
+                    # We end up fighting with fix_python_imports if we do.
+                    start, end = _get_area_for_ast_node(
+                        imp.node, file_info, include_previous_comments=False)
+                    pre_context = body[start:imp.start]
+                    post_context = body[imp.end:end]
+                    # Now we can add the new import and have the same context
+                    # as the import we are taking the place of!
+                    text_to_add = ''.join(
+                        [pre_context, import_stmt, post_context])
+                    yield khodemod.Patch(filename, '', text_to_add,
+                                         start, start)
 
     return suggestor
 
