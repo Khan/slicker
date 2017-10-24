@@ -318,13 +318,13 @@ class AcceptingFrontend(Frontend):
         for warning in warnings:
             assert filename == warning.filename, warning
             lineno, _ = pos_to_line_col(body, warning.pos)
-            line = body.splitlines()[lineno]
+            line = body.splitlines()[lineno - 1]
             emit("WARNING:%s\n    on %s:%s --> %s"
                  % (warning.message, filename, lineno, line))
 
     def handle_error(self, root, error):
         body = read_file(root, error.filename) or ''
         lineno, _ = pos_to_line_col(body, error.pos)
-        line = body.splitlines()[lineno]
+        line = body.splitlines()[lineno - 1]
         emit("ERROR:%s\n    on %s:%s --> %s"
              % (error.message, error.filename, lineno, line))

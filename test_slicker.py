@@ -332,13 +332,16 @@ class NamesStartingWithTest(unittest.TestCase):
 
 
 class RootTest(TestBase):
+    # TODO(benkraft): Assert no warnings/errors, like FixUsesTest.
     def test_root(self):
         self.copy_file('simple_in.py')
         with open(self.join('foo.py'), 'w') as f:
             print >>f, "def some_function(): return 4"
 
         slicker.make_fixes('foo.some_function', 'bar.new_name', 'bar',
-                           project_root=self.tmpdir)
+                           # TODO(benkraft): Enable automove here once we
+                           # support renaming the symbol.
+                           project_root=self.tmpdir, automove=False)
 
         with open(self.join('simple_in.py')) as f:
             actual_body = f.read()
@@ -347,7 +350,8 @@ class RootTest(TestBase):
         self.assertMultiLineEqual(expected_body, actual_body)
 
 
-class MoveSuggestorTest(TestBase):
+class FileMoveSuggestorTest(TestBase):
+    # TODO(benkraft): Assert no warnings/errors, like FixUsesTest.
     def test_move_module_within_directory(self):
         self.write_file('foo.py', 'def myfunc(): return 4\n')
         self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
@@ -433,6 +437,76 @@ class MoveSuggestorTest(TestBase):
         self.write_file('qux/foo/baz.py', 'def myfunc(): return 5\n')
 
 
+class SymbolMoveSuggestorTest(TestBase):
+    # TODO(benkraft): Assert no warnings/errors, like FixUsesTest.
+    def test_move_only_symbol_in_file_to_new_file(self):
+        self.write_file('foo.py', 'def myfunc(): return 17\n')
+        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc', 'newfoo',
+                           project_root=self.tmpdir)
+        self.assertFileIs('newfoo.py', 'def myfunc(): return 17\n')
+        self.assertFileIsNot('foo.py')
+
+    def test_appending_to_existing_file(self):
+        # Note since myfunc is at the top of foo.py, and there's only one
+        # newline at the bottom of newfoo.py, this tests the case where we add
+        # newlines.
+        self.write_file('foo.py', 'def myfunc(): return 17\n')
+        self.write_file('newfoo.py',
+                        ('"""A file with the new version of foo."""\n'
+                         'import quux\n\n'
+                         'def otherfunc():\n'
+                         '    return 71\n'))
+        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc', 'newfoo',
+                           project_root=self.tmpdir)
+        self.assertFileIs('newfoo.py',
+                          ('"""A file with the new version of foo."""\n'
+                           'import quux\n\n'
+                           'def otherfunc():\n'
+                           '    return 71\n\n\n'
+                           'def myfunc(): return 17\n'))
+        self.assertFileIsNot('foo.py')
+
+    def test_moving_with_context(self):
+        self.write_file('foo.py',
+                        ('"""A file with the old version of foo."""\n'
+                         'import quux\n\n'
+                         'def _secretfunc():\n'
+                         '    return "secretmonkeys"\n\n\n'
+                         '# Does some stuff\n'
+                         '# Be careful calling it!\n\n'
+                         'def myfunc():\n'
+                         '    """Returns a number."""\n'
+                         '    return 289\n\n\n'
+                         '# Here is another function.\n'
+                         'def otherfunc():\n'
+                         '    return 1 + 1\n'))
+        self.write_file('newfoo.py',
+                        ('"""A file with the new version of foo."""\n'
+                         'import quux\n\n'
+                         'def otherfunc():\n'
+                         '    return 71\n'))
+        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc', 'newfoo',
+                           project_root=self.tmpdir)
+        self.assertFileIs('newfoo.py',
+                          ('"""A file with the new version of foo."""\n'
+                           'import quux\n\n'
+                           'def otherfunc():\n'
+                           '    return 71\n\n\n'
+                           '# Does some stuff\n'
+                           '# Be careful calling it!\n\n'
+                           'def myfunc():\n'
+                           '    """Returns a number."""\n'
+                           '    return 289\n'))
+        self.assertFileIs('foo.py',
+                          ('"""A file with the old version of foo."""\n'
+                           'import quux\n\n'
+                           'def _secretfunc():\n'
+                           '    return "secretmonkeys"\n\n\n'
+                           '# Here is another function.\n'
+                           'def otherfunc():\n'
+                           '    return 1 + 1\n'))
+
+
 class FixUsesTest(TestBase):
     def run_test(self, filebase, old_fullname, new_fullname,
                  name_to_import, import_alias=None,
@@ -451,7 +525,11 @@ class FixUsesTest(TestBase):
         khodemod.emit = lambda txt: self.error_output.append(txt)
         try:
             slicker.make_fixes(old_fullname, new_fullname, name_to_import,
-                               import_alias, project_root=self.tmpdir)
+                               import_alias, project_root=self.tmpdir,
+                               # Since we just create placeholder files for the
+                               # moved symbol, we won't be able to find it,
+                               # which introduces a spurious error.
+                               automove=False)
         finally:
             khodemod.emit = old_emit
 
@@ -464,6 +542,8 @@ class FixUsesTest(TestBase):
             self.assertItemsEqual([expected_error], self.error_output)
         if expected_warnings:
             self.assertItemsEqual(expected_warnings, self.error_output)
+        elif expected:
+            self.assertFalse(self.error_output)
 
     def create_module(self, module_name):
         abspath = self.join(module_name.replace('.', os.sep) + '.py')
@@ -501,8 +581,9 @@ class FixUsesTest(TestBase):
         self.run_test(
             'implicit',
             'foo.bar.baz.some_function', 'quux.new_name', 'quux',
-            expected_warnings=['WARNING:This import may be used implicitly.\n'
-                               '    on implicit_in.py:2 --> '])
+            expected_warnings=[
+                'WARNING:This import may be used implicitly.\n'
+                '    on implicit_in.py:2 --> import foo.bar.baz'])
 
     def test_double_implicit(self):
         self.create_module('foo.bar.baz')
@@ -542,7 +623,7 @@ class FixUsesTest(TestBase):
             import_alias='foo',
             expected_error=(
                 'ERROR:Your alias will conflict with imports in this file.\n'
-                '    on conflict_in.py:1 --> '))
+                '    on conflict_in.py:1 --> import foo.bar'))
 
     def test_conflict_2(self):
         self.create_module('bar')
@@ -552,15 +633,16 @@ class FixUsesTest(TestBase):
             'foo.bar',
             expected_error=(
                 'ERROR:Your alias will conflict with imports in this file.\n'
-                '    on conflict_2_in.py:1 --> import bar'))
+                '    on conflict_2_in.py:1 --> import quux as foo'))
 
     def test_unused(self):
         self.create_module('foo.bar')
         self.run_test(
             'unused',
             'foo.bar.some_function', 'quux.some_function', 'quux',
-            expected_warnings=['WARNING:Not removing import with @Nolint.\n'
-                               '    on unused_in.py:3 --> '])
+            expected_warnings=[
+                'WARNING:Not removing import with @Nolint.\n'
+                '    on unused_in.py:3 --> import foo.baz  # @UnusedImport'])
 
     def test_many_imports(self):
         self.create_module('foo.quux')
