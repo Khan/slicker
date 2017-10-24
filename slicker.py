@@ -915,7 +915,7 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
                 # call an import explicit if it is of the symbol's module.
                 if _dotted_starts_with(old_fullname, imp.name)}
 
-            if not old_imports:
+            if not explicit_imports:
                 # We need to add a totally new toplevel import, not
                 # corresponding to an existing one.  (So we also don't
                 # need to worry about copying comments or indenting.)
@@ -923,27 +923,13 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
             else:
                 # There were existing imports of the old name,
                 # so we try to match those.
-                if explicit_imports:
-                    # If there previously existed an explicit import, we add at
-                    # the location of each explicit import, and only those.
-                    # TODO(benkraft): This doesn't work correctly in the case
-                    # where there was an implicit toplevel import, and an
-                    # explicit late import, and the moved symbol was used
-                    # outside the scope of the late import.  To handle this
-                    # case, we'll need to do much more careful tracing of which
-                    # imports exist in which scopes.
-                    add_at = explicit_imports
-                else:
-                    # If not, we add at the first implicit import only.
-                    # TODO(benkraft): This is not really right if we have
-                    # multiple late implicit imports.  Maybe we should just
-                    # fallback to the "contextless" case here, since it's not
-                    # clear we can know what's right?
-                    first_implicit_import = min(old_imports,
-                                                key=lambda imp: imp.start)
-                    add_at = {first_implicit_import}
-
-                for imp in add_at:
+                # TODO(benkraft): This doesn't work correctly in the case
+                # where there was an implicit toplevel import, and an
+                # explicit late import, and the moved symbol was used
+                # outside the scope of the late import.  To handle this
+                # case, we'll need to do much more careful tracing of which
+                # imports exist in which scopes.
+                for imp in explicit_imports:
                     # Copy the old import's context, such as opening indent
                     # and trailing newline.
                     # TODO(benkraft): If the context we copy is a comment, and
