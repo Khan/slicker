@@ -1,3 +1,2 @@
 asttokens
-codemod
 tqdm
