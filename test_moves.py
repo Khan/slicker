@@ -84,9 +84,9 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
         slicker.make_fixes('foo', 'qux',
                            project_root=self.tmpdir)
         self.assertFileIs('qux/__init__.py', '')
-        self.write_file('qux/foo/__init__.py', '')
-        self.write_file('qux/foo/bar.py', 'def myfunc(): return 4\n')
-        self.write_file('qux/foo/baz.py', 'def myfunc(): return 5\n')
+        self.assertFileIs('qux/foo/__init__.py', '')
+        self.assertFileIs('qux/foo/bar.py', 'def myfunc(): return 4\n')
+        self.assertFileIs('qux/foo/baz.py', 'def myfunc(): return 5\n')
 
 
 class SymbolMoveSuggestorTest(test_slicker.TestBase):
