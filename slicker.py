@@ -646,14 +646,6 @@ def _move_symbol_suggestor(project_root, old_fullname, new_fullname):
         if filename != _filename_for_module_name(old_module):
             return
 
-        if old_symbol != new_symbol:
-            # TODO(benkraft): Implement this case, which requires finding and
-            # editing the right token in the moved region.
-            raise khodemod.FatalError(filename, 0,
-                                      "Can't move and rename symbol from "
-                                      "'%s' to '%s' automatically."
-                                      % (old_symbol, new_symbol))
-
         # Find where old_fullname is defined in old_module.
         # TODO(csilvers): traverse try/except, for, etc, and complain
         # if we see the symbol defined inside there.
@@ -678,32 +670,73 @@ def _move_symbol_suggestor(project_root, old_fullname, new_fullname):
         # Now get the startpos and endpos of this symbol's definition.
         start, end = _get_area_for_ast_node(
             top_level_stmt, file_info, include_previous_comments=True)
-        moved_region = body[start:end]
+        definition_region = body[start:end]
 
-        if start == 0 and end == len(body):
-            # If we're removing the rest of the file, delete it.
-            yield khodemod.Patch(filename, body, None, start, end)
+        # Decide what text to add, which may require a rename.
+        if old_symbol == new_symbol:
+            new_definition_region = definition_region
         else:
-            # TODO(benrkaft): Should we check on newlines here too?
-            yield khodemod.Patch(filename, moved_region, '', start, end)
+            # Find the token with the name of the symbol, and update it.
+            if isinstance(top_level_stmt, (ast.FunctionDef, ast.ClassDef)):
+                for token in file_info.tokens.get_tokens(top_level_stmt):
+                    if token.string in ('def', 'class'):
+                        break
+                else:
+                    raise khodemod.FatalError(
+                        filename, 0,
+                        "Could not find symbol '%s' in "
+                        "'%s': maybe it's defined weirdly?"
+                        % (old_symbol, old_module))
+                # We want the token after the def.
+                name_token = file_info.tokens.next_token(token)
+            else:  # isinstance(top_level_stmt, ast.Assign)
+                # The name should be a single token, if we get here.
+                name_token, = list(file_info.tokens.get_tokens(
+                    top_level_stmt.targets[0]))
 
-        new_filename = _filename_for_module_name(new_module)
-        new_file_body = khodemod.read_file(project_root, new_filename) or ''
+            if name_token.string != old_symbol:
+                raise khodemod.FatalError(filename, 0,
+                                          "Could not find symbol '%s' in "
+                                          "'%s': maybe it's defined weirdly?"
+                                          % (old_symbol, old_module))
+            new_definition_region = (
+                body[start:name_token.startpos] + new_symbol
+                + body[name_token.endpos:end])
 
-        if new_file_body:
-            # If adding to an existing file, ensure we insert enough newlines.
-            # TODO(benkraft): Should we also remove extra newlines?
-            current_newlines = (
-                len(new_file_body) - len(new_file_body.rstrip('\r\n')) +
-                len(moved_region) - len(moved_region.lstrip('\r\n')))
-            if current_newlines < 3:
-                moved_region = '\n' * (3 - current_newlines) + moved_region
+        if old_module == new_module:
+            # Just patch the module in place.
+            yield khodemod.Patch(
+                filename, definition_region, new_definition_region, start, end)
+        else:
+            # We need to remove it from the old module, and add to the new.
+            if start == 0 and end == len(body):
+                # If we're removing the rest of the file, delete it.
+                yield khodemod.Patch(filename, body, None, start, end)
+            else:
+                # TODO(benrkaft): Should we check on newlines here too?
+                yield khodemod.Patch(
+                    filename, definition_region, '', start, end)
 
-        # Now we need to add the new symbol to new_module.
-        yield khodemod.Patch(new_filename, '', moved_region,
-                             len(new_file_body), len(new_file_body))
+            new_filename = _filename_for_module_name(new_module)
+            new_file_body = khodemod.read_file(
+                project_root, new_filename) or ''
 
-        # TODO(benkraft): Fix up imports in the new and old modules.
+            if new_file_body:
+                # If adding to an existing file, check we have enough newlines.
+                # TODO(benkraft): Should we also remove extra newlines?
+                current_newlines = (
+                    len(new_file_body) - len(new_file_body.rstrip('\r\n'))
+                    + len(new_definition_region)
+                    - len(new_definition_region.lstrip('\r\n')))
+                if current_newlines < 3:
+                    new_definition_region = ('\n' * (3 - current_newlines)
+                                             + new_definition_region)
+
+            # Now we need to add the new symbol to new_module.
+            yield khodemod.Patch(new_filename, '', new_definition_region,
+                                 len(new_file_body), len(new_file_body))
+
+            # TODO(benkraft): Fix up imports in the new and old modules.
 
     return suggestor
 
