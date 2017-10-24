@@ -15,9 +15,14 @@ class TestBase(unittest.TestCase):
     def setUp(self):
         self.tmpdir = os.path.realpath(
             tempfile.mkdtemp(prefix=(self.__class__.__name__ + '.')))
+        self.error_output = []
+        # Poor-man's mock.
+        self._old_emit = khodemod.emit
+        khodemod.emit = lambda txt: self.error_output.append(txt)
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir)
+        khodemod.emit = self._old_emit
 
     def join(self, *args):
         return os.path.join(self.tmpdir, *args)
@@ -364,7 +369,6 @@ class NamesStartingWithTest(unittest.TestCase):
 
 
 class RootTest(TestBase):
-    # TODO(benkraft): Assert no warnings/errors, like FixUsesTest.
     def test_root(self):
         self.copy_file('simple_in.py')
         with open(self.join('foo.py'), 'w') as f:
@@ -378,6 +382,7 @@ class RootTest(TestBase):
         with open('testdata/simple_out.py') as f:
             expected_body = f.read()
         self.assertMultiLineEqual(expected_body, actual_body)
+        self.assertFalse(self.error_output)
 
 
 class FixUsesTest(TestBase):
@@ -392,19 +397,12 @@ class FixUsesTest(TestBase):
 
         self.copy_file('%s_in.py' % filebase)
 
-        # Poor-man's mock.
-        self.error_output = []
-        old_emit = khodemod.emit
-        khodemod.emit = lambda txt: self.error_output.append(txt)
-        try:
-            slicker.make_fixes(old_fullname, new_fullname,
-                               import_alias, project_root=self.tmpdir,
-                               # Since we just create placeholder files for the
-                               # moved symbol, we won't be able to find it,
-                               # which introduces a spurious error.
-                               automove=False)
-        finally:
-            khodemod.emit = old_emit
+        slicker.make_fixes(old_fullname, new_fullname,
+                           import_alias, project_root=self.tmpdir,
+                           # Since we just create placeholder files for the
+                           # moved symbol, we won't be able to find it,
+                           # which introduces a spurious error.
+                           automove=False)
 
         with open(self.join('%s_in.py' % filebase)) as f:
             actual = f.read()
@@ -604,3 +602,4 @@ class ImportSortTest(TestBase):
         with open('testdata/third_party_sorting_out.py') as f:
             expected = f.read()
         self.assertMultiLineEqual(expected, actual)
+        self.assertFalse(self.error_output)

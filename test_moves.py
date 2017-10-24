@@ -3,7 +3,6 @@ import test_slicker
 
 
 class FileMoveSuggestorTest(test_slicker.TestBase):
-    # TODO(benkraft): Assert no warnings/errors, like FixUsesTest.
     def test_move_module_within_directory(self):
         self.write_file('foo.py', 'def myfunc(): return 4\n')
         self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
@@ -12,6 +11,7 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
         self.assertFileIs('baz.py', 'def myfunc(): return 4\n')
         self.assertFileIs('bar.py', 'import baz\n\nbaz.myfunc()\n')
         self.assertFileIsNot('foo.py')
+        self.assertFalse(self.error_output)
 
     def test_move_module_to_a_new_directory(self):
         self.write_file('foo.py', 'def myfunc(): return 4\n')
@@ -21,6 +21,7 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
         self.assertFileIs('baz/bang.py', 'def myfunc(): return 4\n')
         self.assertFileIs('bar.py', 'import baz.bang\n\nbaz.bang.myfunc()\n')
         self.assertFileIsNot('foo.py')
+        self.assertFalse(self.error_output)
 
     def test_move_module_to_an_existing_directory(self):
         self.write_file('foo.py', 'def myfunc(): return 4\n')
@@ -31,6 +32,7 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
         self.assertFileIs('baz/foo.py', 'def myfunc(): return 4\n')
         self.assertFileIs('bar.py', 'import baz.foo\n\nbaz.foo.myfunc()\n')
         self.assertFileIsNot('foo.py')
+        self.assertFalse(self.error_output)
 
     def test_move_module_out_of_a_directory(self):
         self.write_file('foo/__init__.py', '')
@@ -41,6 +43,7 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
         self.assertFileIs('bang.py', 'def myfunc(): return 4\n')
         self.assertFileIs('baz.py', 'import bang\n\nbang.myfunc()\n')
         self.assertFileIsNot('foo/bar.py')
+        self.assertFalse(self.error_output)
         # TODO(csilvers): assert that the whole dir `foo` has gone away.
 
     def test_move_module_to_existing_name(self):
@@ -74,6 +77,7 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
                            'return newfoo.bar.val + newfoo.baz.val +'
                            ' newfoo.bang.qux.qux\n'))
         self.assertFileIsNot('foo/bar.py')
+        self.assertFalse(self.error_output)
         # TODO(csilvers): assert that the whole dir `foo` has gone away.
 
     def test_move_package_to_existing_name(self):
@@ -87,16 +91,17 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
         self.assertFileIs('qux/foo/__init__.py', '')
         self.assertFileIs('qux/foo/bar.py', 'def myfunc(): return 4\n')
         self.assertFileIs('qux/foo/baz.py', 'def myfunc(): return 5\n')
+        self.assertFalse(self.error_output)
 
 
 class SymbolMoveSuggestorTest(test_slicker.TestBase):
-    # TODO(benkraft): Assert no warnings/errors, like FixUsesTest.
     def test_move_function(self):
         self.write_file('foo.py', 'def myfunc(): return 17\n')
         slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py', 'def myfunc(): return 17\n')
         self.assertFileIsNot('foo.py')
+        self.assertFalse(self.error_output)
 
     def test_move_class(self):
         self.write_file('foo.py', 'class Classy(object): return 17\n')
@@ -104,6 +109,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py', 'class Classy(object): return 17\n')
         self.assertFileIsNot('foo.py')
+        self.assertFalse(self.error_output)
 
     def test_move_constant(self):
         self.write_file('foo.py', 'CACHE = {}\n')
@@ -111,6 +117,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py', 'CACHE = {}\n')
         self.assertFileIsNot('foo.py')
+        self.assertFalse(self.error_output)
 
     def test_appending_to_existing_file(self):
         # Note since myfunc is at the top of foo.py, and there's only one
@@ -131,6 +138,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                            '    return 71\n\n\n'
                            'def myfunc(): return 17\n'))
         self.assertFileIsNot('foo.py')
+        self.assertFalse(self.error_output)
 
     def test_moving_with_context(self):
         self.write_file('foo.py',
@@ -171,6 +179,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                            '# Here is another function.\n'
                            'def otherfunc():\n'
                            '    return 1 + 1\n'))
+        self.assertFalse(self.error_output)
 
     def test_renaming_function(self):
         self.write_file('foo.py',
@@ -181,6 +190,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
         self.assertFileIs('foo.py',
                           ('def mybetterfunc():\n'
                            '    return 17\n'))
+        self.assertFalse(self.error_output)
 
     def test_renaming_decorated_function(self):
         self.write_file('foo.py',
@@ -193,6 +203,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                           ('@decorator\n'
                            'def mybetterfunc():\n'
                            '    return 17\n'))
+        self.assertFalse(self.error_output)
 
     def test_renaming_new_style_class(self):
         self.write_file('foo.py',
@@ -203,6 +214,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
         self.assertFileIs('foo.py',
                           ('class Classier(object):\n'
                            '    return 17\n'))
+        self.assertFalse(self.error_output)
 
     def test_renaming_old_style_class(self):
         self.write_file('foo.py',
@@ -213,6 +225,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
         self.assertFileIs('foo.py',
                           ('class Classier:\n'
                            '    return 17\n'))
+        self.assertFalse(self.error_output)
 
     def test_renaming_decorated_class(self):
         self.write_file('foo.py',
@@ -225,12 +238,14 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                           ('@decorator\n'
                            'class Classier(object):\n'
                            '    return 17\n'))
+        self.assertFalse(self.error_output)
 
     def test_renaming_constant(self):
         self.write_file('foo.py', 'CACHE = {}\n')
         slicker.make_fixes('foo.CACHE', 'foo._SECRET_CACHE',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py', '_SECRET_CACHE = {}\n')
+        self.assertFalse(self.error_output)
 
     def test_rename_and_move(self):
         self.write_file('foo.py',
@@ -244,3 +259,4 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                            'class Classier(object):\n'
                            '    return 17\n'))
         self.assertFileIsNot('foo.py')
+        self.assertFalse(self.error_output)
