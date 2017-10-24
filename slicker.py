@@ -87,6 +87,14 @@ def _dotted_prefixes(string):
         yield '.'.join(string_parts[:i + 1])
 
 
+def _is_newline(token):
+    # I think this is equivalent to doing
+    #      token.type in (tokenize.NEWLINE, tokenize.NL)
+    # TODO(benkraft): We don't really handle files with windows newlines
+    # correctly -- any newlines we add will be wrong.  Do the right thing.
+    return token.string in ('\n', '\r\n')
+
+
 class FakeOptions(object):
     """A fake `options` object to pass in to fix_python_imports."""
     def __init__(self, project_root):
@@ -409,14 +417,14 @@ def _get_area_for_ast_node(node, file_info, include_previous_comments):
     else:
         for istart in xrange(first_tok.index - 1, -1, -1):
             tok = file_info.tokens.tokens[istart]
-            if tok.string and (tok.string == '\n' or not tok.string.isspace()):
+            if tok.string and (_is_newline(tok) or not tok.string.isspace()):
                 break
         else:
             istart = -1
 
     # We don't want the *very* earliest newline before us to be
     # part of our context: it's ending the previous statement.
-    if istart >= 0 and file_info.tokens.tokens[istart + 1].string == '\n':
+    if istart >= 0 and _is_newline(file_info.tokens.tokens[istart + 1]):
         istart += 1
 
     prev_tok_endpos = (file_info.tokens.tokens[istart].endpos
@@ -426,7 +434,7 @@ def _get_area_for_ast_node(node, file_info, include_previous_comments):
     for tok in file_info.tokens.tokens[last_tok.index + 1:]:
         if tok.type == tokenize.COMMENT:
             last_tok = tok
-        elif tok.string == '\n':
+        elif _is_newline(tok):
             last_tok = tok
             break
         else:
@@ -564,7 +572,7 @@ def _add_contextless_import_patch(file_info, import_text):
         for tok in file_info.tokens.tokens:
             if not (tok.type == tokenize.COMMENT
                     or tok.type == tokenize.STRING
-                    or tok.string == '\n'):
+                    or _is_newline(tok)):
                 pos = tok.startpos
                 break
         else:
@@ -686,8 +694,8 @@ def _move_symbol_suggestor(project_root, old_fullname, new_fullname):
             # If adding to an existing file, ensure we insert enough newlines.
             # TODO(benkraft): Should we also remove extra newlines?
             current_newlines = (
-                len(new_file_body) - len(new_file_body.rstrip('\n')) +
-                len(moved_region) - len(moved_region.lstrip('\n')))
+                len(new_file_body) - len(new_file_body.rstrip('\r\n')) +
+                len(moved_region) - len(moved_region.lstrip('\r\n')))
             if current_newlines < 3:
                 moved_region = '\n' * (3 - current_newlines) + moved_region
 
