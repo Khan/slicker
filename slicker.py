@@ -477,6 +477,76 @@ def _replace_in_string(str_tokens, regex, replacement, file_info):
             deletion_start, deletion_end)
 
 
+def _replace_in_file(file_info, old_fullname, old_localnames,
+                     new_fullname, new_localname):
+    """Replace old name with new name in file, everywhere.
+
+    Arguments:
+        old_fullname, new_fullname: as in _fix_uses_suggestor.
+        old_localnames: the localnames to look for when replacing, as strings.
+        new_localname: the localname to replace with, as a string.
+
+    Returns (list of patches, set of old_localnames we patched in code).
+    """
+    patches = []
+    patched_localnames = set()
+
+    # First, fix up normal references in code.
+    for localname in old_localnames - {new_localname}:
+        for (name, ast_nodes) in (
+                _names_starting_with(localname, file_info).iteritems()):
+            for node in ast_nodes:
+                start, end = file_info.tokens.get_text_range(node)
+                patched_localnames.add(localname)
+                patches.append(khodemod.Patch(
+                    file_info.filename, file_info.body[start:end],
+                    new_localname + name[len(localname):],
+                    start, end))
+
+    # Fix up references in strings and comments.  We look for both the
+    # fully-qualified name and any aliases in use in this file, as well as
+    # the filename if we are moving a module.  We always replace
+    # fully-qualified references with fully-qualified references;
+    # references to aliases get replaced with whatever we're using for the
+    # rest of the file.
+    regexes_to_check = [(_re_for_name(old_fullname), new_fullname)]
+    for localname in old_localnames - {new_localname, old_fullname}:
+        regexes_to_check.append((_re_for_name(localname), new_localname))
+    # Also check for the fullname being represented as a file.
+    # In cases where the fullname is not a module (but is instead
+    # module.symbol) this will typically be a noop.
+    regexes_to_check.append((
+        re.compile(re.escape(util.filename_for_module_name(old_fullname))),
+        util.filename_for_module_name(new_fullname)))
+
+    # Strings
+    for node in ast.walk(file_info.tree):
+        if isinstance(node, ast.Str):
+            start, end = file_info.tokens.get_text_range(node)
+            str_tokens = list(
+                file_info.tokens.get_tokens(node, include_extra=True))
+            for regex, replacement in regexes_to_check:
+                if regex.search(node.s):
+                    patches.extend(
+                        _replace_in_string(str_tokens,
+                                           regex, replacement, file_info))
+
+    # Comments
+    for token in file_info.tokens.tokens:
+        if token.type == tokenize.COMMENT:
+            for regex, replacement in regexes_to_check:
+                # TODO(benkraft): Handle names broken across multiple lines
+                # of comments.
+                for match in regex.finditer(token.string):
+                    patches.append(khodemod.Patch(
+                        file_info.filename,
+                        match.group(0), replacement,
+                        token.startpos + match.start(),
+                        token.startpos + match.end()))
+
+    return patches, patched_localnames
+
+
 def _add_contextless_import_patch(file_info, import_text):
     """Add an import to the file_info, in a reasonable place.
 
@@ -484,7 +554,7 @@ def _add_contextless_import_patch(file_info, import_text):
     point at which to place the import; we just want to guess something
     reasonable -- near existing imports if any.
 
-    Yields a patch.
+    Returns a patch.
     """
     last_toplevel_import = None
     for stmt in file_info.tree.body:
@@ -596,60 +666,11 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
 
         # PART THE SECOND:
         #    Patch references to the symbol inline -- everything but imports.
-
-        # First, fix up normal references in code.
-        patched_localnames = set()
-        for localname in old_localname_strings - {new_localname}:
-            for (name, ast_nodes) in (
-                    _names_starting_with(localname, file_info).iteritems()):
-                for node in ast_nodes:
-                    start, end = file_info.tokens.get_text_range(node)
-                    patched_localnames.add(localname)
-                    yield khodemod.Patch(
-                        filename,
-                        body[start:end], new_localname + name[len(localname):],
-                        start, end)
-
-        # Fix up references in strings and comments.  We look for both the
-        # fully-qualified name and any aliases in use in this file, as well as
-        # the filename if we are moving a module.  We always replace
-        # fully-qualified references with fully-qualified references;
-        # references to aliases get replaced with whatever we're using for the
-        # rest of the file.
-        regexes_to_check = [(_re_for_name(old_fullname), new_fullname)]
-        for localname in old_localname_strings - {new_localname, old_fullname}:
-            regexes_to_check.append((_re_for_name(localname), new_localname))
-        # Also check for the fullname being represented as a file.
-        # In cases where the fullname is not a module (but is instead
-        # module.symbol) this will typically be a noop.
-        regexes_to_check.append((
-            re.compile(re.escape(util.filename_for_module_name(old_fullname))),
-            util.filename_for_module_name(new_fullname)))
-
-        # Strings
-        for node in ast.walk(file_info.tree):
-            if isinstance(node, ast.Str):
-                start, end = file_info.tokens.get_text_range(node)
-                str_tokens = list(
-                    file_info.tokens.get_tokens(node, include_extra=True))
-                for regex, replacement in regexes_to_check:
-                    if regex.search(node.s):
-                        for patch in _replace_in_string(
-                                str_tokens, regex, replacement, file_info):
-                            yield patch
-
-        # Comments
-        for token in file_info.tokens.tokens:
-            if token.type == tokenize.COMMENT:
-                for regex, replacement in regexes_to_check:
-                    # TODO(benkraft): Handle names broken across multiple lines
-                    # of comments.
-                    for match in regex.finditer(token.string):
-                        yield khodemod.Patch(
-                            filename,
-                            match.group(0), replacement,
-                            token.startpos + match.start(),
-                            token.startpos + match.end())
+        patches, patched_localnames = _replace_in_file(
+            file_info, old_fullname, old_localname_strings,
+            new_fullname, new_localname)
+        for patch in patches:
+            yield patch
 
         # PART THE THIRD:
         #    Add/remove imports, if necessary.
