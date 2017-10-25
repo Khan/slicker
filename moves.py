@@ -58,25 +58,17 @@ def move_symbol_suggestor(project_root, old_fullname, new_fullname):
         # if we see the symbol defined inside there.
         # TODO(csilvers): look for ast.AugAssign and complain if our
         # symbol is in there.
-        for top_level_stmt in file_info.tree.body:
-            if isinstance(top_level_stmt, (ast.FunctionDef, ast.ClassDef)):
-                if top_level_stmt.name == old_symbol:
-                    break
-            elif isinstance(top_level_stmt, ast.Assign):
-                # Ignore assignments like 'a, b = x, y', and 'x.y = 5'
-                if (len(top_level_stmt.targets) == 1 and
-                        isinstance(top_level_stmt.targets[0], ast.Name) and
-                        top_level_stmt.targets[0].id == old_symbol):
-                    break
-        else:
+        old_module_toplevel = util.toplevel_names(file_info)
+        if old_symbol not in old_module_toplevel:
             raise khodemod.FatalError(filename, 0,
                                       "Could not find symbol '%s' in '%s': "
                                       "maybe it's in a try/finally or if?"
                                       % (old_symbol, old_module))
 
         # Now get the startpos and endpos of this symbol's definition.
+        node_to_move = old_module_toplevel[old_symbol]
         start, end = util.get_area_for_ast_node(
-            top_level_stmt, file_info, include_previous_comments=True)
+            node_to_move, file_info, include_previous_comments=True)
         definition_region = body[start:end]
 
         # Decide what text to add, which may require a rename.
@@ -84,8 +76,8 @@ def move_symbol_suggestor(project_root, old_fullname, new_fullname):
             new_definition_region = definition_region
         else:
             # Find the token with the name of the symbol, and update it.
-            if isinstance(top_level_stmt, (ast.FunctionDef, ast.ClassDef)):
-                for token in file_info.tokens.get_tokens(top_level_stmt):
+            if isinstance(node_to_move, (ast.FunctionDef, ast.ClassDef)):
+                for token in file_info.tokens.get_tokens(node_to_move):
                     if token.string in ('def', 'class'):
                         break
                 else:
@@ -96,10 +88,10 @@ def move_symbol_suggestor(project_root, old_fullname, new_fullname):
                         % (old_symbol, old_module))
                 # We want the token after the def.
                 name_token = file_info.tokens.next_token(token)
-            else:  # isinstance(top_level_stmt, ast.Assign)
+            else:  # isinstance(node_to_move, ast.Assign)
                 # The name should be a single token, if we get here.
                 name_token, = list(file_info.tokens.get_tokens(
-                    top_level_stmt.targets[0]))
+                    node_to_move.targets[0]))
 
             if name_token.string != old_symbol:
                 raise khodemod.FatalError(filename, 0,
@@ -115,7 +107,7 @@ def move_symbol_suggestor(project_root, old_fullname, new_fullname):
             yield khodemod.Patch(
                 filename, definition_region, new_definition_region, start, end)
         else:
-            # We need to remove it from the old module, and add to the new.
+            # Remove the region from the old file.
             if start == 0 and end == len(body):
                 # If we're removing the rest of the file, delete it.
                 yield khodemod.Patch(filename, body, None, start, end)
@@ -124,13 +116,16 @@ def move_symbol_suggestor(project_root, old_fullname, new_fullname):
                 yield khodemod.Patch(
                     filename, definition_region, '', start, end)
 
+            # Add the region to the new file.
             new_filename = util.filename_for_module_name(new_module)
             new_file_body = khodemod.read_file(
                 project_root, new_filename) or ''
 
+            # Mess about with leading newlines.  First, we strip any existing
+            # ones.  Then, if we are adding to an existing file, we add enough
+            # to satisfy pep8.
+            new_definition_region = new_definition_region.lstrip('\r\n')
             if new_file_body:
-                # If adding to an existing file, check we have enough newlines.
-                # TODO(benkraft): Should we also remove extra newlines?
                 current_newlines = (
                     len(new_file_body) - len(new_file_body.rstrip('\r\n'))
                     + len(new_definition_region)
@@ -140,6 +135,8 @@ def move_symbol_suggestor(project_root, old_fullname, new_fullname):
                                              + new_definition_region)
 
             # Now we need to add the new symbol to new_module.
+            # TODO(benkraft): Allow, as an option, adding it after a specific
+            # other symbol in new_module.
             yield khodemod.Patch(new_filename, '', new_definition_region,
                                  len(new_file_body), len(new_file_body))
 

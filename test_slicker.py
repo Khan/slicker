@@ -257,15 +257,15 @@ class DetermineLocalnamesTest(unittest.TestCase):
                 'foo',
                 util.File(
                     'some_file.py',
-                    '# import foo as bar\n'
-                    'import os\n'
-                    'import sys\n'
-                    '\n'
-                    'import bogus\n'
-                    'import foo\n'
-                    '\n'
-                    'def foo():\n'
-                    '    return 1\n')),
+                    ('# import foo as bar\n'
+                     'import os\n'
+                     'import sys\n'
+                     '\n'
+                     'import bogus\n'
+                     'import foo\n'
+                     '\n'
+                     'def foo():\n'
+                     '    return 1\n'))),
             {('foo', 'foo', ('foo', 'foo', 55, 65))})
 
     def test_multiple_imports(self):
@@ -274,10 +274,10 @@ class DetermineLocalnamesTest(unittest.TestCase):
                 'foo.bar.baz',
                 util.File(
                     'some_file.py',
-                    'import foo\n'
-                    'import foo.bar.baz\n'
-                    'from foo.bar import baz\n'
-                    'import foo.quux\n')),
+                    ('import foo\n'
+                     'import foo.bar.baz\n'
+                     'from foo.bar import baz\n'
+                     'import foo.quux\n'))),
             {('foo.bar.baz', 'foo.bar.baz', ('foo', 'foo', 0, 10)),
              ('foo.bar.baz', 'foo.bar.baz',
               ('foo.bar.baz', 'foo.bar.baz', 11, 29)),
@@ -294,6 +294,41 @@ class DetermineLocalnamesTest(unittest.TestCase):
                     'def f():\n'
                     '    some_function(baz.quux)\n')),
             {('foo.bar.some_function', 'some_function', None)})
+
+    def test_late_import(self):
+        self._assert_localnames(
+            slicker._determine_localnames(
+                'foo', util.File(
+                    'some_file.py',
+                    ('def f():\n'
+                     '    import foo\n'))),
+            {('foo', 'foo', ('foo', 'foo', 13, 23))})
+
+        self._assert_localnames(
+            slicker._determine_localnames(
+                'foo', util.File(
+                    'some_file.py',
+                    ('def f():\n'
+                     '    import foo\n')),
+                toplevel_only=True),
+            set())
+
+    def test_within_node(self):
+        file_info = util.File(
+            'some_file.py',
+            ('import foo\n\n\n'
+             'def f():\n'
+             '    import foo as bar\n'))
+        def_node = file_info.tree.body[1]
+
+        self._assert_localnames(
+            slicker._determine_localnames('foo', file_info),
+            {('foo', 'foo', ('foo', 'foo', 0, 10)),
+             ('foo', 'bar', ('foo', 'bar', 26, 43))})
+        self._assert_localnames(
+            slicker._determine_localnames('foo', file_info,
+                                          within_node=def_node),
+            {('foo', 'bar', ('foo', 'bar', 26, 43))})
 
 
 class DottedPrefixTest(unittest.TestCase):
@@ -326,43 +361,42 @@ class DottedPrefixTest(unittest.TestCase):
 class NamesStartingWithTest(unittest.TestCase):
     def test_simple(self):
         self.assertEqual(
-            set(slicker._names_starting_with('a', util.File(None, 'a\n'))),
+            set(slicker._names_starting_with('a', ast.parse('a\n'))),
             {'a'})
         self.assertEqual(
             set(slicker._names_starting_with(
-                'a', util.File(None, 'a.b.c\n'))),
+                'a', ast.parse('a.b.c\n'))),
             {'a.b.c'})
         self.assertEqual(
             set(slicker._names_starting_with(
-                'a', util.File(None, 'd.e.f\n'))),
+                'a', ast.parse('d.e.f\n'))),
             set())
 
         self.assertEqual(
             set(slicker._names_starting_with(
-                'abc', util.File(None, 'abc.de\n'))),
+                'abc', ast.parse('abc.de\n'))),
             {'abc.de'})
         self.assertEqual(
             set(slicker._names_starting_with(
-                'ab', util.File(None, 'abc.de\n'))),
+                'ab', ast.parse('abc.de\n'))),
             set())
 
         self.assertEqual(
             set(slicker._names_starting_with(
-                'a', util.File(None, '"a.b.c"\n'))),
+                'a', ast.parse('"a.b.c"\n'))),
             set())
         self.assertEqual(
             set(slicker._names_starting_with(
-                'a', util.File(None, 'import a.b.c\n'))),
+                'a', ast.parse('import a.b.c\n'))),
             set())
         self.assertEqual(
             set(slicker._names_starting_with(
-                'a', util.File(None, 'b.c.a.b.c\n'))),
+                'a', ast.parse('b.c.a.b.c\n'))),
             set())
 
     def test_in_context(self):
         self.assertEqual(
-            set(slicker._names_starting_with('a', util.File(
-                None,
+            set(slicker._names_starting_with('a', ast.parse(
                 'def abc():\n'
                 '    if a.b == a.c:\n'
                 '        return a.d(a.e + a.f)\n'
@@ -409,14 +443,16 @@ class FixUsesTest(TestBase):
         with open(self.join('%s_in.py' % filebase)) as f:
             actual = f.read()
 
-        if expected:
-            self.assertMultiLineEqual(expected, actual)
-        else:
-            self.assertItemsEqual([expected_error], self.error_output)
+        # Assert about the errors first, because they may be more informative.
         if expected_warnings:
             self.assertItemsEqual(expected_warnings, self.error_output)
         elif expected:
             self.assertFalse(self.error_output)
+
+        if expected:
+            self.assertMultiLineEqual(expected, actual)
+        else:
+            self.assertItemsEqual([expected_error], self.error_output)
 
     def create_module(self, module_name):
         abspath = self.join(module_name.replace('.', os.sep) + '.py')
@@ -448,6 +484,13 @@ class FixUsesTest(TestBase):
         self.run_test(
             'same_prefix',
             'foo.bar.some_function', 'foo.baz.some_function')
+
+    @unittest.skip("TODO(benkraft): We shouldn't consider this a conflict.")
+    def test_same_alias(self):
+        self.create_module('foo')
+        self.run_test(
+            'same_alias',
+            'foo.some_function', 'bar.some_function', import_alias='foo')
 
     def test_implicit(self):
         self.create_module('foo.bar.baz')
@@ -584,6 +627,316 @@ class FixUsesTest(TestBase):
         self.run_test(
             'destination_file_2',
             'somewhere_else.myfunc', 'destination_file_2_in.myfunc')
+
+
+class FixMovedRegionSuggestorTest(TestBase):
+    # TODO(benkraft): In many cases (mostly noted below), we should remove
+    # imports, but don't yet.
+    def test_rename_references_self(self):
+        self.write_file('foo.py',
+                        ('something = 1\n'
+                         'def fib(n):\n'
+                         '    return fib(n - 1) + fib(n - 2)\n'))
+        slicker.make_fixes('foo.fib', 'foo.slow_fib',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          ('something = 1\n'
+                           'def slow_fib(n):\n'
+                           '    return slow_fib(n - 1) + slow_fib(n - 2)\n'))
+        self.assertFalse(self.error_output)
+
+    def test_move_references_self(self):
+        self.write_file('foo.py',
+                        ('something = 1\n'
+                         'def fib(n):\n'
+                         '    return fib(n - 1) + fib(n - 2)\n'))
+        slicker.make_fixes('foo.fib', 'newfoo.fib',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          'something = 1\n')
+        self.assertFileIs('newfoo.py',
+                          ('def fib(n):\n'
+                           '    return fib(n - 1) + fib(n - 2)\n'))
+        self.assertFalse(self.error_output)
+
+    def test_rename_and_move_references_self(self):
+        self.write_file('foo.py',
+                        ('something = 1\n'
+                         'def fib(n):\n'
+                         '    return fib(n - 1) + fib(n - 2)\n'))
+        slicker.make_fixes('foo.fib', 'newfoo.slow_fib',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          'something = 1\n')
+        self.assertFileIs('newfoo.py',
+                          ('def slow_fib(n):\n'
+                           '    return slow_fib(n - 1) + slow_fib(n - 2)\n'))
+        self.assertFalse(self.error_output)
+
+    def test_references_old_module(self):
+        self.write_file('foo.py',
+                        ('const = 1\n\n\n'
+                         'def f():\n'
+                         '    pass\n\n\n'
+                         'def myfunc():\n'
+                         '    return f(const)\n'))
+        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          ('const = 1\n\n\n'
+                           'def f():\n'
+                           '    pass\n'))
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import foo\n\n\n'
+                           'def myfunc():\n'
+                           '    return foo.f(foo.const)\n'))
+        self.assertFalse(self.error_output)
+
+    def test_references_old_module_already_imported(self):
+        self.write_file('foo.py',
+                        ('const = 1\n\n\n'
+                         'def f():\n'
+                         '    pass\n\n\n'
+                         'def myfunc():\n'
+                         '    return f(const)\n'))
+        self.write_file('newfoo.py',
+                        ('from __future__ import absolute_import\n\n'
+                         'import foo\n\n\n'
+                         'def f():\n'
+                         '    return foo.f()\n'))
+
+        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          ('const = 1\n\n\n'
+                           'def f():\n'
+                           '    pass\n'))
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import foo\n\n\n'
+                           'def f():\n'
+                           '    return foo.f()\n\n\n'
+                           'def myfunc():\n'
+                           '    return foo.f(foo.const)\n'))
+        self.assertFalse(self.error_output)
+
+    def test_references_old_module_imports_self(self):
+        self.write_file('foo.py',
+                        ('import foo\n\n\n'
+                         'const = 1\n\n\n'
+                         'def f(x):\n'
+                         '    pass\n\n\n'
+                         'def myfunc():\n'
+                         '    return foo.f(foo.const)\n'))
+        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          ('import foo\n\n\n'  # TODO(benkraft): remove
+                           'const = 1\n\n\n'
+                           'def f(x):\n'
+                           '    pass\n'))
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import foo\n\n\n'
+                           'def myfunc():\n'
+                           '    return foo.f(foo.const)\n'))
+        self.assertFalse(self.error_output)
+
+    def test_references_new_module(self):
+        self.write_file('foo.py',
+                        ('import newfoo\n\n\n'
+                         'def myfunc():\n'
+                         '    return newfoo.f(newfoo.const)\n'))
+        self.write_file('newfoo.py',
+                        ('const = 1\n\n\n'
+                         'def f(x):\n'
+                         '    pass\n'))
+        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        # TODO(benkraft): remove last import and file
+        # self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('const = 1\n\n\n'
+                           'def f(x):\n'
+                           '    pass\n\n\n'
+                           'def myfunc():\n'
+                           '    return f(const)\n'))
+        self.assertFalse(self.error_output)
+
+    def test_references_new_module_via_alias(self):
+        self.write_file('foo.py',
+                        ('import newfoo as bar\n\n\n'
+                         'def myfunc():\n'
+                         '    return bar.f(bar.const)\n'))
+        self.write_file('newfoo.py',
+                        ('const = 1\n\n\n'
+                         'def f(x):\n'
+                         '    pass\n'))
+        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        # TODO(benkraft): remove last import and file
+        # self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('const = 1\n\n\n'
+                           'def f(x):\n'
+                           '    pass\n\n\n'
+                           'def myfunc():\n'
+                           '    return f(const)\n'))
+        self.assertFalse(self.error_output)
+
+    def test_references_new_module_via_symbol_import(self):
+        self.write_file('foo.py',
+                        ('from newfoo import const\n'
+                         'from newfoo import f\n\n\n'
+                         'def myfunc():\n'
+                         '    return f(const)\n'))
+        self.write_file('newfoo.py',
+                        ('const = 1\n\n\n'
+                         'def f():\n'
+                         '    pass\n'))
+        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        # TODO(benkraft): remove last import and file
+        # self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('const = 1\n\n\n'
+                           'def f():\n'
+                           '    pass\n\n\n'
+                           'def myfunc():\n'
+                           '    return f(const)\n'))
+        self.assertFalse(self.error_output)
+
+    def test_references_new_module_imports_self(self):
+        self.write_file('foo.py',
+                        ('import newfoo\n\n\n'
+                         'def myfunc():\n'
+                         '    return newfoo.f(newfoo.const)\n'))
+        self.write_file('newfoo.py',
+                        ('import newfoo\n\n\n'
+                         'const = 1\n\n\n'
+                         'def f(x):\n'
+                         '    return newfoo.const\n'))
+        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        # TODO(benkraft): remove last import and file
+        # self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('import newfoo\n\n\n'
+                           'const = 1\n\n\n'
+                           'def f(x):\n'
+                           '    return newfoo.const\n\n\n'
+                           'def myfunc():\n'
+                           '    return f(const)\n'))
+        self.assertFalse(self.error_output)
+
+    def test_move_references_everything_in_sight(self):
+        self.write_file('foo.py',
+                        ('import newfoo\n\n\n'
+                         'def f(x):\n'
+                         '    pass\n\n\n'
+                         'def myfunc(n):\n'
+                         '    return myfunc(n-1) + f(newfoo.const)\n'))
+        self.write_file('newfoo.py',
+                        ('const = 1\n'))
+        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          ('import newfoo\n\n\n'  # TODO(benkraft): remove
+                           'def f(x):\n'
+                           '    pass\n'))
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import foo\n\n\n'
+                           'const = 1\n\n\n'
+                           'def myfunc(n):\n'
+                           '    return myfunc(n-1) + foo.f(const)\n'))
+
+    def test_rename_and_move_references_everything_in_sight(self):
+        self.write_file('foo.py',
+                        ('import newfoo\n\n\n'
+                         'def f(x):\n'
+                         '    pass\n\n\n'
+                         'def myfunc(n):\n'
+                         '    return myfunc(n-1) + f(newfoo.const)\n'))
+        self.write_file('newfoo.py',
+                        ('const = 1\n'))
+        slicker.make_fixes('foo.myfunc', 'newfoo.mynewerfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          ('import newfoo\n\n\n'  # TODO(benkraft): remove
+                           'def f(x):\n'
+                           '    pass\n'))
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import foo\n\n\n'
+                           'const = 1\n\n\n'
+                           'def mynewerfunc(n):\n'
+                           '    return mynewerfunc(n-1) + foo.f(const)\n'))
+
+    def test_move_references_same_name_in_both(self):
+        self.write_file('foo.py',
+                        ('import newfoo\n\n\n'
+                         'def f(g):\n'
+                         '    return g(1)\n\n\n'
+                         'def myfunc(n):\n'
+                         '    return f(newfoo.f)\n'))
+        self.write_file('newfoo.py',
+                        ('const = 1\n\n\n'
+                         'def f(x):\n'
+                         '    return x\n'))
+        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          ('import newfoo\n\n\n'  # TODO(benkraft): remove
+                           'def f(g):\n'
+                           '    return g(1)\n'))
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import foo\n\n\n'
+                           'const = 1\n\n\n'
+                           'def f(x):\n'
+                           '    return x\n\n\n'
+                           'def myfunc(n):\n'
+                           '    return foo.f(f)\n'))
+
+    def test_late_import_in_moved_region(self):
+        self.write_file('foo.py',
+                        ('def myfunc():\n'
+                         '    import newfoo\n'
+                         '    return newfoo.const\n'))
+        self.write_file('newfoo.py',
+                        ('const = 1\n'))
+        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('const = 1\n\n\n'
+                           'def myfunc():\n'
+                           '    import newfoo\n'  # TODO(benkraft): remove
+                           '    return const\n'))
+
+    def test_late_import_elsewhere(self):
+        self.write_file('foo.py',
+                        ('def f():\n'
+                         '    import newfoo\n'
+                         '    return newfoo.const\n\n\n'
+                         'def myfunc():\n'
+                         '    import newfoo\n'
+                         '    return newfoo.const\n'))
+        self.write_file('newfoo.py',
+                        ('const = 1\n'))
+        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          ('def f():\n'
+                           '    import newfoo\n'
+                           '    return newfoo.const\n'))
+        self.assertFileIs('newfoo.py',
+                          ('const = 1\n\n\n'
+                           'def myfunc():\n'
+                           '    import newfoo\n'  # TODO(benkraft): remove
+                           '    return const\n'))
 
 
 class ImportSortTest(TestBase):

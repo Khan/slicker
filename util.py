@@ -86,3 +86,24 @@ def get_area_for_ast_node(node, file_info, include_previous_comments):
             break
 
     return (prev_tok_endpos, last_tok.endpos)
+
+
+def toplevel_names(file_info):
+    """Return a dict of name -> AST node with toplevel definitions in the file.
+
+    This includes function definitions, class definitions, and constants.
+    """
+    # TODO(csilvers): traverse try/except, for, etc, and complain
+    # if we see the symbol defined inside there.
+    # TODO(benkraft): Figure out how to handle ast.AugAssign (+=) and multiple
+    # assignments like `a, b = x, y`.
+    retval = {}
+    for top_level_stmt in file_info.tree.body:
+        if isinstance(top_level_stmt, (ast.FunctionDef, ast.ClassDef)):
+            retval[top_level_stmt.name] = top_level_stmt
+        elif isinstance(top_level_stmt, ast.Assign):
+            # Ignore assignments like 'a, b = x, y', and 'x.y = 5'
+            if (len(top_level_stmt.targets) == 1 and
+                    isinstance(top_level_stmt.targets[0], ast.Name)):
+                retval[top_level_stmt.targets[0].id] = top_level_stmt
+    return retval

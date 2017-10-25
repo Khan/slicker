@@ -130,7 +130,8 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                         ('"""A file with the new version of foo."""\n'
                          'import quux\n\n'
                          'def otherfunc():\n'
-                         '    return 71\n'))
+                         # Make sure that extra newline won't mess us up:
+                         '    return 71\n\n'))
         slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py',
