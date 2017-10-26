@@ -996,7 +996,7 @@ def _import_sort_suggestor(project_root):
     return suggestor
 
 
-def make_fixes(old_fullname, new_fullname, import_alias=None,
+def make_fixes(old_fullnames, new_fullname, import_alias=None,
                project_root='.', automove=True, verbose=False):
     """name_to_import is the module-part of new_fullname."""
     def log(msg):
@@ -1008,7 +1008,7 @@ def make_fixes(old_fullname, new_fullname, import_alias=None,
 
     # Return a list of (old_fullname, new_fullname) pairs that we can rename.
     old_new_fullname_pairs = inputs.expand_and_normalize(
-        project_root, old_fullname, new_fullname)
+        project_root, old_fullnames, new_fullname)
 
     for (oldname, newname, is_symbol) in old_new_fullname_pairs:
         if automove:
@@ -1051,8 +1051,18 @@ def main():
     # at once.
     # TODO(csilvers): allow moving multiple files into a single directory too.
     parser = argparse.ArgumentParser()
-    parser.add_argument('old_fullname')
-    parser.add_argument('new_fullname')
+    parser.add_argument('old_fullnames', metavar='old_fullname', nargs='+',
+                        help=('fullname to move: can be path.to.package, '
+                              'path.to.package.module, '
+                              'path.to.package.module.symbol, '
+                              'some/dir, or some/dir/file.py'))
+    parser.add_argument('new_fullname',
+                        help=('fullname to rename to. This can always be of '
+                              'the same "type" as old_fullname, but can '
+                              'also be one level up: e.g. moving a symbol '
+                              'to a module, or a module to a package. It '
+                              '*must* be one level up if multiple '
+                              'old_fullnames are specified.'))
     parser.add_argument('--no-automove', dest='automove',
                         action='store_false', default=True,
                         help=('Do not automatically move OLD_FULLNAME to '
@@ -1071,7 +1081,7 @@ def main():
     parsed_args = parser.parse_args()
 
     make_fixes(
-        parsed_args.old_fullname, parsed_args.new_fullname,
+        parsed_args.old_fullnames, parsed_args.new_fullname,
         import_alias=parsed_args.alias,
         project_root=parsed_args.root,
         automove=parsed_args.automove,

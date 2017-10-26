@@ -29,43 +29,9 @@ import khodemod
 import util
 
 
-def expand_and_normalize(project_root, old_fullname, new_fullname,
-                         path_filter=khodemod.default_path_filter()):
-    """Yield a list of old-new-info triples that effect the requested rename.
-
-    In the simple case old_fullname is a module and new_fullname is a
-    module, this will just return the input: [(old_fullname,
-    new_fullname)].  Likewise if old_fullname is a symbol and
-    new_fullname is a symbol.
-
-    But if old_fullname is a package (dir) and so is new_fullname,
-    then we will return a list of (old_module, new_module, is_symbol)
-    triples for every module under the dir.
-
-    We also handle cases where old_fullname and new_fullname are not
-    of the same "type", and where new_fullname already exists.  For
-    instance, when moving a module into a package, we convert
-    new_fullname to have the right name in the destination package.
-    And when moving a package into a directory that already exists,
-    we'll make it a subdir of the target-dir.
-
-    We *also* handle cases where old_fullname and new_fullname are
-    files instead of dotted module names.  In that case we convert
-    them to module-names first.
-
-    When moving a module to a package, or a package into a new
-    directory, you can have several inputs, and each will be moved.
-
-    Some types of input are illegal: it's probably a mistake if
-    old_fullname is a symbol and new_fullname is a package.  Or
-    if old_fullname doesn't actually exist.  We raise in those cases.
-
-    Yields:
-       (old_fullname, new_fullname, is_symbol) triples.
-       is_symbol is true if old_fullname is a symbol in a module, or
-       false if it's a module.
-
-    """
+def _expand_and_normalize_one(project_root, old_fullname, new_fullname,
+                              path_filter=khodemod.default_path_filter()):
+    """See expand_and_normalize.__doc__."""
     def filename_for(mod):
         return os.path.join(project_root, util.filename_for_module_name(mod))
 
@@ -109,6 +75,9 @@ def expand_and_normalize(project_root, old_fullname, new_fullname,
 
     (old_fullname, old_type) = _normalize_fullname_and_get_type(old_fullname)
     (new_fullname, new_type) = _normalize_fullname_and_get_type(new_fullname)
+
+    if old_fullname == new_fullname:
+        raise ValueError("Cannot move an object (%s) to itself" % old_fullname)
 
     # Below, we follow the following rule: if we don't know what
     # the type of new_type is (because it doesn't exist yet), we
@@ -166,6 +135,9 @@ def expand_and_normalize(project_root, old_fullname, new_fullname,
             raise ValueError("Cannot move a package '%s' into a %s (%s)"
                              % (old_fullname, new_type, new_fullname))
         elif new_type == "package":
+            if new_fullname.startswith(old_fullname + '.'):
+                raise ValueError("Cannot move a package '%s' to its own "
+                                 "subdir (%s)" % (old_fullname, new_fullname))
             if os.path.exists(filename_for(new_fullname + '.__init__')):
                 # mv semantics, same as if we did 'mv /var/log /etc'
                 package_basename = old_fullname.rsplit('.', 1)[-1]
@@ -187,3 +159,60 @@ def expand_and_normalize(project_root, old_fullname, new_fullname,
     elif old_type == "unknown":
         raise ValueError("Cannot figure out what '%s' is: "
                          "module or package not found" % old_fullname)
+
+
+def expand_and_normalize(project_root, old_fullnames, new_fullname,
+                         path_filter=khodemod.default_path_filter()):
+    """Return a list of old-new-info triples that effect the requested rename.
+
+    In the simple case old_fullname is a module and new_fullname is a
+    module, this will just return the input: [(old_fullname,
+    new_fullname)].  Likewise if old_fullname is a symbol and
+    new_fullname is a symbol.
+
+    But if old_fullname is a package (dir) and so is new_fullname,
+    then we will return a list of (old_module, new_module, is_symbol)
+    triples for every module under the dir.
+
+    We also handle cases where old_fullname and new_fullname are not
+    of the same "type", and where new_fullname already exists.  For
+    instance, when moving a module into a package, we convert
+    new_fullname to have the right name in the destination package.
+    And when moving a package into a directory that already exists,
+    we'll make it a subdir of the target-dir.
+
+    We *also* handle cases where old_fullname and new_fullname are
+    files instead of dotted module names.  In that case we convert
+    them to module-names first.
+
+    When moving a symbol to a module, a module to a package, or a
+    package into a new directory, you can have several inputs, and
+    each will be moved.
+
+    Some types of input are illegal: it's probably a mistake if
+    old_fullname is a symbol and new_fullname is a package.  Or
+    if old_fullname doesn't actually exist.  We raise in those cases.
+
+    Returns:
+       (old_fullname, new_fullname, is_symbol) triples.
+       is_symbol is true if old_fullname is a symbol in a module, or
+       false if it's a module.
+    """
+    retval = []
+    for old_fullname in old_fullnames:
+        retval.extend(_expand_and_normalize_one(project_root, old_fullname,
+                                                new_fullname, path_filter))
+
+    # Sanity-check.  If two different things are being moved to the
+    # same new-fullname, that's a problem.  It probably means we tried
+    # to move two modules into a module instead of into a package, or
+    # some such.
+    seen_newnames = {}
+    for (old_fullname, new_fullname, _) in retval:
+        if new_fullname in seen_newnames:
+            raise ValueError(
+                "You asked to rename both '%s' and '%s' to '%s'. Impossible!"
+                % (old_fullname, seen_newnames[new_fullname], new_fullname))
+        seen_newnames[new_fullname] = old_fullname
+
+    return retval

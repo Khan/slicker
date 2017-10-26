@@ -8,7 +8,7 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
     def test_move_module_within_directory(self):
         self.write_file('foo.py', 'def myfunc(): return 4\n')
         self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
-        slicker.make_fixes('foo', 'baz',
+        slicker.make_fixes(['foo'], 'baz',
                            project_root=self.tmpdir)
         self.assertFileIs('baz.py', 'def myfunc(): return 4\n')
         self.assertFileIs('bar.py', 'import baz\n\nbaz.myfunc()\n')
@@ -18,7 +18,7 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
     def test_move_module_to_a_new_directory(self):
         self.write_file('foo.py', 'def myfunc(): return 4\n')
         self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
-        slicker.make_fixes('foo', 'baz.bang',
+        slicker.make_fixes(['foo'], 'baz.bang',
                            project_root=self.tmpdir)
         self.assertFileIs('baz/bang.py', 'def myfunc(): return 4\n')
         self.assertFileIs('bar.py', 'import baz.bang\n\nbaz.bang.myfunc()\n')
@@ -29,7 +29,7 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
         self.write_file('foo.py', 'def myfunc(): return 4\n')
         self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
         self.write_file('baz/__init__.py', '')
-        slicker.make_fixes('foo', 'baz',
+        slicker.make_fixes(['foo'], 'baz',
                            project_root=self.tmpdir)
         self.assertFileIs('baz/foo.py', 'def myfunc(): return 4\n')
         self.assertFileIs('bar.py', 'import baz.foo\n\nbaz.foo.myfunc()\n')
@@ -40,7 +40,7 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
         self.write_file('foo/__init__.py', '')
         self.write_file('foo/bar.py', 'def myfunc(): return 4\n')
         self.write_file('baz.py', 'import foo.bar\n\nfoo.bar.myfunc()\n')
-        slicker.make_fixes('foo.bar', 'bang',
+        slicker.make_fixes(['foo.bar'], 'bang',
                            project_root=self.tmpdir)
         self.assertFileIs('bang.py', 'def myfunc(): return 4\n')
         self.assertFileIs('baz.py', 'import bang\n\nbang.myfunc()\n')
@@ -52,7 +52,7 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
         self.write_file('foo.py', 'def myfunc(): return 4\n')
         self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
         with self.assertRaises(ValueError):
-            slicker.make_fixes('foo', 'bar',
+            slicker.make_fixes(['foo'], 'bar',
                                project_root=self.tmpdir)
 
     def test_move_package(self):
@@ -66,7 +66,7 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
                          'import foo.bang.qux\n\n'
                          'return foo.bar.val + foo.baz.val +'
                          ' foo.bang.qux.qux\n'))
-        slicker.make_fixes('foo', 'newfoo',
+        slicker.make_fixes(['foo'], 'newfoo',
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo/__init__.py', '')
         self.assertFileIs('newfoo/bar.py', 'def myfunc(): return 4\n')
@@ -87,7 +87,7 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
         self.write_file('foo/bar.py', 'def myfunc(): return 4\n')
         self.write_file('foo/baz.py', 'def myfunc(): return 5\n')
         self.write_file('qux/__init__.py', '')
-        slicker.make_fixes('foo', 'qux',
+        slicker.make_fixes(['foo'], 'qux',
                            project_root=self.tmpdir)
         self.assertFileIs('qux/__init__.py', '')
         self.assertFileIs('qux/foo/__init__.py', '')
@@ -99,7 +99,7 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
 class SymbolMoveSuggestorTest(test_slicker.TestBase):
     def test_move_function(self):
         self.write_file('foo.py', 'def myfunc(): return 17\n')
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py', 'def myfunc(): return 17\n')
         self.assertFileIsNot('foo.py')
@@ -107,7 +107,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
 
     def test_move_class(self):
         self.write_file('foo.py', 'class Classy(object): return 17\n')
-        slicker.make_fixes('foo.Classy', 'newfoo.Classy',
+        slicker.make_fixes(['foo.Classy'], 'newfoo.Classy',
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py', 'class Classy(object): return 17\n')
         self.assertFileIsNot('foo.py')
@@ -115,7 +115,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
 
     def test_move_constant(self):
         self.write_file('foo.py', 'CACHE = {}\n')
-        slicker.make_fixes('foo.CACHE', 'newfoo.CACHE',
+        slicker.make_fixes(['foo.CACHE'], 'newfoo.CACHE',
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py', 'CACHE = {}\n')
         self.assertFileIsNot('foo.py')
@@ -132,7 +132,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                          'def otherfunc():\n'
                          # Make sure that extra newline won't mess us up:
                          '    return 71\n\n'))
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py',
                           ('"""A file with the new version of foo."""\n'
@@ -162,7 +162,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                          'import quux\n\n'
                          'def otherfunc():\n'
                          '    return 71\n'))
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py',
                           ('"""A file with the new version of foo."""\n'
@@ -188,7 +188,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
         self.write_file('foo.py',
                         ('def myfunc():\n'
                          '    return 17\n'))
-        slicker.make_fixes('foo.myfunc', 'foo.mybetterfunc',
+        slicker.make_fixes(['foo.myfunc'], 'foo.mybetterfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('def mybetterfunc():\n'
@@ -200,7 +200,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                         ('@decorator\n'
                          'def myfunc():\n'
                          '    return 17\n'))
-        slicker.make_fixes('foo.myfunc', 'foo.mybetterfunc',
+        slicker.make_fixes(['foo.myfunc'], 'foo.mybetterfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('@decorator\n'
@@ -212,7 +212,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
         self.write_file('foo.py',
                         ('class Classy(object):\n'
                          '    return 17\n'))
-        slicker.make_fixes('foo.Classy', 'foo.Classier',
+        slicker.make_fixes(['foo.Classy'], 'foo.Classier',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('class Classier(object):\n'
@@ -223,7 +223,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
         self.write_file('foo.py',
                         ('class Classy:\n'
                          '    return 17\n'))
-        slicker.make_fixes('foo.Classy', 'foo.Classier',
+        slicker.make_fixes(['foo.Classy'], 'foo.Classier',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('class Classier:\n'
@@ -235,7 +235,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                         ('@decorator\n'
                          'class Classy(object):\n'
                          '    return 17\n'))
-        slicker.make_fixes('foo.Classy', 'foo.Classier',
+        slicker.make_fixes(['foo.Classy'], 'foo.Classier',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('@decorator\n'
@@ -245,7 +245,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
 
     def test_renaming_constant(self):
         self.write_file('foo.py', 'CACHE = {}\n')
-        slicker.make_fixes('foo.CACHE', 'foo._SECRET_CACHE',
+        slicker.make_fixes(['foo.CACHE'], 'foo._SECRET_CACHE',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py', '_SECRET_CACHE = {}\n')
         self.assertFalse(self.error_output)
@@ -255,7 +255,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                         ('# a class.\n'
                          'class Classy(object):\n'
                          '    return 17\n'))
-        slicker.make_fixes('foo.Classy', 'newfoo.Classier',
+        slicker.make_fixes(['foo.Classy'], 'newfoo.Classier',
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py',
                           ('# a class.\n'

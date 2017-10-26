@@ -410,7 +410,7 @@ class RootTest(TestBase):
         with open(self.join('foo.py'), 'w') as f:
             print >>f, "def some_function(): return 4"
 
-        slicker.make_fixes('foo.some_function', 'bar.new_name',
+        slicker.make_fixes(['foo.some_function'], 'bar.new_name',
                            project_root=self.tmpdir)
 
         with open(self.join('simple_in.py')) as f:
@@ -433,7 +433,7 @@ class FixUsesTest(TestBase):
 
         self.copy_file('%s_in.py' % filebase)
 
-        slicker.make_fixes(old_fullname, new_fullname,
+        slicker.make_fixes([old_fullname], new_fullname,
                            import_alias, project_root=self.tmpdir,
                            # Since we just create placeholder files for the
                            # moved symbol, we won't be able to find it,
@@ -637,7 +637,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                         ('something = 1\n'
                          'def fib(n):\n'
                          '    return fib(n - 1) + fib(n - 2)\n'))
-        slicker.make_fixes('foo.fib', 'foo.slow_fib',
+        slicker.make_fixes(['foo.fib'], 'foo.slow_fib',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('something = 1\n'
@@ -650,7 +650,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                         ('something = 1\n'
                          'def fib(n):\n'
                          '    return fib(n - 1) + fib(n - 2)\n'))
-        slicker.make_fixes('foo.fib', 'newfoo.fib',
+        slicker.make_fixes(['foo.fib'], 'newfoo.fib',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           'something = 1\n')
@@ -664,7 +664,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                         ('something = 1\n'
                          'def fib(n):\n'
                          '    return fib(n - 1) + fib(n - 2)\n'))
-        slicker.make_fixes('foo.fib', 'newfoo.slow_fib',
+        slicker.make_fixes(['foo.fib'], 'newfoo.slow_fib',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           'something = 1\n')
@@ -680,7 +680,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                          '    pass\n\n\n'
                          'def myfunc():\n'
                          '    return f(const)\n'))
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('const = 1\n\n\n'
@@ -706,7 +706,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                          'def f():\n'
                          '    return foo.f()\n'))
 
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('const = 1\n\n\n'
@@ -729,7 +729,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                          '    pass\n\n\n'
                          'def myfunc():\n'
                          '    return foo.f(foo.const)\n'))
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('import foo\n\n\n'  # TODO(benkraft): remove
@@ -752,7 +752,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                         ('const = 1\n\n\n'
                          'def f(x):\n'
                          '    pass\n'))
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         # TODO(benkraft): remove last import and file
         # self.assertFileIsNot('foo.py')
@@ -773,7 +773,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                         ('const = 1\n\n\n'
                          'def f(x):\n'
                          '    pass\n'))
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         # TODO(benkraft): remove last import and file
         # self.assertFileIsNot('foo.py')
@@ -795,7 +795,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                         ('const = 1\n\n\n'
                          'def f():\n'
                          '    pass\n'))
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         # TODO(benkraft): remove last import and file
         # self.assertFileIsNot('foo.py')
@@ -817,7 +817,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                          'const = 1\n\n\n'
                          'def f(x):\n'
                          '    return newfoo.const\n'))
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         # TODO(benkraft): remove last import and file
         # self.assertFileIsNot('foo.py')
@@ -839,7 +839,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                          '    return myfunc(n-1) + f(newfoo.const)\n'))
         self.write_file('newfoo.py',
                         ('const = 1\n'))
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('import newfoo\n\n\n'  # TODO(benkraft): remove
@@ -861,7 +861,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                          '    return myfunc(n-1) + f(newfoo.const)\n'))
         self.write_file('newfoo.py',
                         ('const = 1\n'))
-        slicker.make_fixes('foo.myfunc', 'newfoo.mynewerfunc',
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.mynewerfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('import newfoo\n\n\n'  # TODO(benkraft): remove
@@ -885,7 +885,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                         ('const = 1\n\n\n'
                          'def f(x):\n'
                          '    return x\n'))
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('import newfoo\n\n\n'  # TODO(benkraft): remove
@@ -907,7 +907,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                          '    return newfoo.const\n'))
         self.write_file('newfoo.py',
                         ('const = 1\n'))
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIsNot('foo.py')
         self.assertFileIs('newfoo.py',
@@ -926,7 +926,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                          '    return newfoo.const\n'))
         self.write_file('newfoo.py',
                         ('const = 1\n'))
-        slicker.make_fixes('foo.myfunc', 'newfoo.myfunc',
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('def f():\n'
@@ -949,7 +949,7 @@ class ImportSortTest(TestBase):
             with open(self.join(f), 'w') as f:
                 print >>f, '# A file'
 
-        slicker.make_fixes('third_party_sorting_in', 'out',
+        slicker.make_fixes(['third_party_sorting_in'], 'out',
                            project_root=self.tmpdir)
 
         with open(self.join('out.py')) as f:
