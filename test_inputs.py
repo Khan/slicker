@@ -1,7 +1,5 @@
 from __future__ import absolute_import
 
-import os
-
 import inputs
 import test_slicker
 
@@ -47,7 +45,8 @@ class InputsTest(test_slicker.TestBase):
 
     def test_non_existing_source_file(self):
         self.assert_fails(self.join('baz.py'), 'bar',
-                          "Cannot move baz: %s not found" % self.join("baz.py"))
+                          ("Cannot move baz: %s not found"
+                           % self.join("baz.py")))
         self.assert_fails(self.join('dir/baz.py'), 'bar',
                           ("Cannot move dir.baz: %s not found"
                            % self.join("dir", "baz.py")))
@@ -128,7 +127,7 @@ class InputsTest(test_slicker.TestBase):
 
     def test_symbol_to_existing_symbol(self):
         self.write_file('bar.py', 'def myfunc(): return 4\n')
-        error = ("Cannot move symbol 'foo.myfunc' to 'bar': "
-                 "'bar' already defines a symbol named 'myfunc'.")
         # TODO(csilvers): actually test for this case
+        # error = ("Cannot move symbol 'foo.myfunc' to 'bar': "
+        #          "'bar' already defines a symbol named 'myfunc'.")
         # self.assert_fails('foo.myfunc', 'bar', error)

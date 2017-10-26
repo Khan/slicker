@@ -1,0 +1,2 @@
+[flake8]
+exclude = .git,fix-includes,fix_python_imports.py,testdata
