@@ -26,17 +26,7 @@ from __future__ import absolute_import
 import os
 
 import khodemod
-
-
-# TODO(csilvers): break these out into some utility file?
-def _filename_for_module_name(module_name):
-    """filename is relative to a sys.path entry, such as your project-root."""
-    return '%s.py' % module_name.replace('.', os.sep)
-
-
-def _module_name_for_filename(filename):
-    """filename is relative to a sys.path entry, such as your project-root."""
-    return os.path.splitext(filename)[0].replace(os.sep, '.')
+import util
 
 
 def expand_and_normalize(project_root, old_fullname, new_fullname,
@@ -61,11 +51,10 @@ def expand_and_normalize(project_root, old_fullname, new_fullname,
 
     We *also* handle cases where old_fullname and new_fullname are
     files instead of dotted module names.  In that case we convert
-    them to module-names first.  TODO(csilvers): implement this.
+    them to module-names first.
 
     When moving a module to a package, or a package into a new
     directory, you can have several inputs, and each will be moved.
-    TODO(csilvers): implement this.
 
     Some types of input are illegal: it's probably a mistake if
     old_fullname is a symbol and new_fullname is a package.  Or
@@ -78,49 +67,86 @@ def expand_and_normalize(project_root, old_fullname, new_fullname,
 
     """
     def filename_for(mod):
-        return os.path.join(project_root, _filename_for_module_name(mod))
+        return os.path.join(project_root, util.filename_for_module_name(mod))
 
-    def _fullname_type(fullname):
+    def _assert_exists(module, error_prefix):
+        if not os.path.exists(filename_for(module)):
+            raise ValueError("%s: %s not found"
+                             % (error_prefix, filename_for(module)))
+
+    def _normalize_fullname_and_get_type(fullname):
+        # Check the cases that fullname is a file or a directory.
+        # We convert it to a module if so.
+        if fullname.endswith('.py'):
+            relpath = os.path.relpath(fullname, project_root)
+            return (util.module_name_for_filename(relpath), "module")
+        if os.sep in fullname:
+            relpath = os.path.relpath(fullname, project_root)
+            return (util.module_name_for_filename(relpath), "package")
+
         if os.path.exists(filename_for(fullname)):
-            return "module"
+            return (fullname, "module")
         if os.path.exists(filename_for(fullname + '.__init__')):
-            return "package"
-        if os.path.exists(filename_for(fullname.rsplit('.', 1)[0])):
-            return "symbol"
-        return "unknown"
+            return (fullname, "package")
+
+        # If we're foo.bar, we could be a symbol named bar in foo.py
+        # or we could be a file foo/bar.py.  To distinguish, we check
+        # if foo/__init__.py exists.
+        if '.' in fullname:
+            (parent, symbol) = fullname.rsplit('.', 1)
+            if os.path.exists(filename_for(parent + '.__init__')):
+                return (fullname, "module")
+            if os.path.exists(filename_for(parent)):
+                return (fullname, "symbol")
+
+        return (fullname, "unknown")
 
     def _modules_under(package_name):
         """Yield module-names relative to package_name-root."""
         package_dir = os.path.dirname(filename_for(package_name + '.__init__'))
         for path in khodemod.resolve_paths(path_filter, root=package_dir):
-            yield _module_name_for_filename(path)
+            yield util.module_name_for_filename(path)
 
-    old_type = _fullname_type(old_fullname)
-    new_type = _fullname_type(new_fullname)
+    (old_fullname, old_type) = _normalize_fullname_and_get_type(old_fullname)
+    (new_fullname, new_type) = _normalize_fullname_and_get_type(new_fullname)
 
     # Below, we follow the following rule: if we don't know what
     # the type of new_type is (because it doesn't exist yet), we
     # assume the user wanted it to be the same type as old_type.
 
     if old_type == "symbol":
-        if new_type in ("symbol", "unknown"):
+        (module, symbol) = old_fullname.rsplit('.', 1)
+        _assert_exists(module, "Cannot move %s" % old_fullname)
+
+        # TODO(csilvers): check that the 2nd element of the return-value
+        # doesn't refer to a symbol that already exists.
+        if new_type == "symbol":
             yield (old_fullname, new_fullname, True)
         elif new_type == "module":
-            symbol = old_fullname.rsplit('.', 1)
-            # TODO(csilvers): check new_fullname doesn't already define
-            # a symbol named `symbol`.
             yield (old_fullname, '%s.%s' % (new_fullname, symbol), True)
         elif new_type == "package":
             raise ValueError("Cannot move symbol '%s' to a package (%s)"
                              % (old_fullname, new_fullname))
+        elif new_type == "unknown":
+            # According to the rule above, we should treat new_fullname
+            # as a symbol.  But if it doesn't have a dot, it *can't* be
+            # a symbol; symbols must look like "module.symbol".  So we
+            # assume it's a module instead.
+            if "." in new_fullname:
+                yield (old_fullname, new_fullname, True)
+            else:
+                yield (old_fullname, '%s.%s' % (new_fullname, symbol), True)
 
     elif old_type == "module":
+        _assert_exists(old_fullname, "Cannot move %s" % old_fullname)
         if new_type == "symbol":
             raise ValueError("Cannot move a module '%s' to a symbol (%s)"
                              % (old_fullname, new_fullname))
         elif new_type == "module":
-            raise ValueError("Cannot use slicker to merge modules "
-                             "(%s already exists)" % new_fullname)
+            if os.path.exists(filename_for(new_fullname)):
+                raise ValueError("Cannot use slicker to merge modules "
+                                 "(%s already exists)" % new_fullname)
+            yield (old_fullname, new_fullname, False)
         elif new_type == "package":
             module_basename = old_fullname.rsplit('.', 1)[-1]
             if os.path.exists(filename_for(new_fullname)):
@@ -134,17 +160,20 @@ def expand_and_normalize(project_root, old_fullname, new_fullname,
             yield (old_fullname, new_fullname, False)
 
     elif old_type == "package":
+        _assert_exists(old_fullname + '.__init__',
+                       "Cannot move %s" % old_fullname)
         if new_type in ("symbol", "module"):
             raise ValueError("Cannot move a package '%s' into a %s (%s)"
                              % (old_fullname, new_type, new_fullname))
         elif new_type == "package":
-            package_basename = old_fullname.rsplit('.', 1)[-1]
-            # mv semantics, same as if we did 'mv /var/log /etc'
-            new_fullname = '%s.%s' % (new_fullname, package_basename)
-            if os.path.exists(filename_for(new_fullname)):
-                raise ValueError("Cannot move package '%s': "
-                                 "'%s' already exists"
-                                 % (old_fullname, new_fullname))
+            if os.path.exists(filename_for(new_fullname + '.__init__')):
+                # mv semantics, same as if we did 'mv /var/log /etc'
+                package_basename = old_fullname.rsplit('.', 1)[-1]
+                new_fullname = '%s.%s' % (new_fullname, package_basename)
+                if os.path.exists(filename_for(new_fullname)):
+                    raise ValueError("Cannot move package '%s': "
+                                     "'%s' already exists"
+                                     % (old_fullname, new_fullname))
             for module in _modules_under(old_fullname):
                 yield ('%s.%s' % (old_fullname, module),
                        '%s.%s' % (new_fullname, module),
