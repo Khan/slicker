@@ -35,6 +35,7 @@ import argparse
 import ast
 import collections
 import difflib
+import itertools
 import os
 import re
 import sys
@@ -145,6 +146,26 @@ def _compute_all_imports(file_info, within_node=None, toplevel_only=False):
                         Import('%s.%s' % (node.module, alias.name),
                                alias.asname or alias.name, start, end, node))
     return imports
+
+
+def _import_provides_module(imp, module):
+    """Return whether this import could possibly give access to this module.
+
+    If module is 'foo.bar' this would return True for 'import foo.bar',
+    'from foo import bar', and 'import foo.baz' -- the last is the
+    "implicit imports" case mentioned in the file docstring.
+
+    Arguments:
+        imp: an Import object
+        module: the fullname of a module.
+    """
+    if imp.name == module:
+        # We are importing the module.
+        return True
+    elif imp.alias == imp.name:
+        # There is no from/as: we need to check for "implicit imports".
+        return imp.name.split('.', 1)[0] == module.split('.', 1)[0]
+    return False
 
 
 def _localnames_from_fullnames(file_info, fullnames, imports=None):
@@ -409,7 +430,7 @@ def _check_import_conflicts(file_info, added_name, is_alias):
                 if _dotted_starts_with(added_name, imp.alias)}
 
 
-def _unused_imports(imports, file_info):
+def _unused_imports(imports, file_info, within_node=None):
     """Decide what imports we can remove.
 
     Note that this should be run after the patches to references in the file
@@ -420,6 +441,8 @@ def _unused_imports(imports, file_info):
             the imports that got us the symbol whose references you're
             updating.
         file_info: the util.File object.
+        within_node: if set, only consider imports within this AST node.
+            (Useful for deciding whether to remove imports in that node.)
 
     Returns (set of imports we can remove,
              set of imports that may be used implicitly).
@@ -428,6 +451,8 @@ def _unused_imports(imports, file_info):
     "import foo.bar" and access "foo.baz.myfunc()", which is legal
     but weird python.
     """
+    if within_node is None:
+        within_node = file_info.tree
     # Decide whether to keep the old import if we changed references to it.
     unused_imports = set()
     implicitly_used_imports = set()
@@ -437,7 +462,7 @@ def _unused_imports(imports, file_info):
         # accessing via this import, due to the python quirk
         # around 'import foo.bar; foo.baz.myfunc()' working.
         implicitly_used_names = _names_starting_with(
-            imp.alias.split('.', 1)[0], file_info.tree)
+            imp.alias.split('.', 1)[0], within_node)
         # This is only those names that we are explicitly accessing
         # via this import, i.e. not depending on the quirk.
         explicitly_referenced_names = [
@@ -966,7 +991,10 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
     the source and/or destination modules as well as itself.  We need to fix up
     those references.  This works a lot like _fix_uses_suggestor, but we're
     actually sort of doing the reverse, since it's our code that's moving while
-    the things we refer to stay where they are.
+    the things we refer to stay where they are.  We additionally add necessary
+    imports to the new file, although we leave it to
+    _remove_moved_region_imports_suggestor to remove now-unused imports from
+    the old file.
 
     Note that this should run after move_symbol_suggestor; it operates on the
     definition in its new location.  It only makes sense for symbols; when
@@ -1001,79 +1029,225 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
             raise khodemod.FatalError(filename, 0,
                                       "Couldn't parse this file: %s" % e)
 
-        # PART THE ZEROTH:
-        #    Do global setup, common to all names to fix up.
-
-        # Figure out what names there are to consider.
-        new_file_names = util.toplevel_names(file_info)
-        old_file_names = util.toplevel_names(old_file_info)
-
-        if new_symbol not in new_file_names:
+        # Find the region we moved.
+        toplevel_names_in_new_file = util.toplevel_names(file_info)
+        if new_symbol not in toplevel_names_in_new_file:
             raise khodemod.FatalError(filename, 0,
                                       "Could not find symbol '%s' in "
                                       "'%s': maybe it's defined weirdly?"
                                       % (new_symbol, new_module))
-        node_to_fix = new_file_names[new_symbol]
+        node_to_fix = toplevel_names_in_new_file[new_symbol]
 
-        # Compute the pairs (old_fullname, new_fullname) we want to fix.  For
-        # most of these symbols, the two fullnames will be the same, but we
-        # also need to fix up references to the moved symbol itself.
-        names_to_fix = set()
-        for name in old_file_names:
-            fullname = '%s.%s' % (old_module, name)
-            names_to_fix.add((fullname, fullname))
-        for name in new_file_names:
-            new_fullname = '%s.%s' % (new_module, name)
-            if name == new_symbol:
-                old_fullname = '%s.%s' % (old_module, old_symbol)
+        # The moved region is full of localnames that make sense in the context
+        # of old_file, but not new_file (since a localname depends on the
+        # imports of the file, plus on whether it is a reference to something
+        # in the current file).  For instance, if the code reegion had the text
+        # `return oldfile_func() + newfile.newfile_func()` we want to rewrite
+        # that to say `return oldfile.oldfile_func() + newfile_func()`, as well
+        # as adding `import oldfile` to newfile.
+
+        # Here, we make a LocalName object for each such localname, which will
+        # help us rewrite them and add imports later.
+        names_in_moved_code = {name for name, node in _all_names(node_to_fix)}
+        # To construct the LocalNames, we typically need to associate an import
+        # with them.  These imports live in the old file, if they're toplevel,
+        # because that's where this code snippet used to live, or in the moved
+        # region itself, if they're late.
+        old_imports = itertools.chain(
+            _compute_all_imports(old_file_info, toplevel_only=True),
+            _compute_all_imports(file_info, within_node=node_to_fix))
+        # Now construct the localnames.  The only special case is the moved
+        # symbol itself, because it's already been moved to the new file, so
+        # when we look at the old file we won't find it.
+        localnames_in_old_file = list(_localnames_from_localnames(
+            old_file_info, names_in_moved_code, old_imports))
+        localnames_in_old_file.append(
+            LocalName(old_fullname, old_symbol, None))
+        # We construct a dict where, for each localname we've found above, we
+        # map from the new fullname associated with the localname to the
+        # LocalName object (containing the old fullname and its localname in
+        # the old file).  (Note that for every symbol except the moved symbol,
+        # those two fullnames are the same.)  Usually there will be only one
+        # such localname for each fullname, but in case there are multiple (for
+        # reasons described in the docstring of _localnames_from_fullnames), we
+        # actually store a set of such LocalName objects.
+        names_to_fix = {}
+        for localname in localnames_in_old_file:
+            if localname.fullname == old_fullname:
+                # This is the moved symbol; we found it under its old fullname
+                # but we want to track it under its new fullname.
+                names_to_fix.setdefault(new_fullname, set()).add(localname)
             else:
-                old_fullname = new_fullname
-            names_to_fix.add((old_fullname, new_fullname))
+                names_to_fix.setdefault(localname.fullname, set()).add(
+                    localname)
 
         # Now, we fix up each name in turn.  This is the part that follows
         # _fix_uses_suggestor fairly closely.
-        # TODO(benkraft): Share common parts with _fix_uses_suggestor.
         imports_to_add = set()
-        for old_fullname_to_fix, new_fullname_to_fix in names_to_fix:
-            # PART THE FIRST:
-            #    Do setup specific to each name to fix up.
-            old_imports = (
-                _compute_all_imports(old_file_info, toplevel_only=True) |
-                _compute_all_imports(file_info, within_node=node_to_fix))
-            old_localnames = _localnames_from_fullnames(
-                old_file_info, {old_fullname_to_fix}, imports=old_imports)
-            old_localname_strings = {ln.localname for ln in old_localnames}
+        for new_fullname_to_fix, old_localnames_to_fix in (
+                names_to_fix.iteritems()):
+            old_localname_strings = {
+                ln.localname for ln in old_localnames_to_fix}
+            # Find the old fullname (which should be the fullname in each item
+            # of old_localnames_to_fix) and choose an import that we got it
+            # from -- we choose the one with the shortest alias to minimize
+            # line-wrapping.
+            old_fullname_to_fix, _, imp = min(
+                old_localnames_to_fix,
+                key=lambda ln: -1 if ln.imp is None else len(ln.imp.alias))
 
-            name_to_import, _ = new_fullname_to_fix.rsplit('.', 1)
-            new_localname, need_new_import = _choose_best_localname(
+            # Figure out by what name we'll refer to new_fullname_to_fix in the
+            # new file.  _choose_best_localname does most of the work, but we
+            # have to figure out what module we want to tell
+            # _choose_best_localname to import if necessary.
+            if imp and _dotted_starts_with(new_fullname_to_fix, imp.name):
+                # If we got new_fullname_to_fix from an explicit import in the
+                # old file, we'll do whatever that import did.
+                name_to_import = imp.name
+                import_alias = imp.alias
+            elif imp:
+                # If we got new_fullname_to_fix from an implicit import in the
+                # old file, we'll still do whatever that import did.
+                # TODO(benkraft): If we had an implicit import, we should
+                # probably make it explicit rather than just copying.
+                name_to_import = imp.name
+                import_alias = None
+            else:
+                # If there was no corresponding import, we know this was a
+                # symbol in the old file, so we tell _choose_best_localname to
+                # import the module (where it now lives -- which is different
+                # for the moved symbol itself), with no alias.
                 # TODO(benkraft): Allow specifying an alias for the old module
                 # in the new file.
-                file_info, new_fullname_to_fix, name_to_import,
-                import_alias=None)
+                name_to_import, _ = new_fullname_to_fix.rsplit('.', 1)
+                import_alias = None
 
-            # PART THE SECOND:
-            #    Patch references to the symbol inline -- everything but
-            #    imports.
+            new_localname, need_new_import = _choose_best_localname(
+                file_info, new_fullname_to_fix, name_to_import,
+                import_alias)
+
+            # Now, patch references.
             patches, used_localnames = _replace_in_file(
                 file_info, old_fullname_to_fix, old_localname_strings,
                 new_fullname_to_fix, new_localname, node_to_fix)
             for patch in patches:
                 yield patch
 
+            # We also *add* imports in this suggestor, because otherwise it's
+            # too hard to tell what imports we need to add by the time we get
+            # to _remove_moved_region_imports_suggestor.  Luckily, that doesn't
+            # complicate things much here.
             if used_localnames and need_new_import:
-                imports_to_add.add('%s\n' % _new_import_stmt(name_to_import,
-                                                             alias=None))
+                if imp:
+                    start, end = util.get_area_for_ast_node(
+                        imp.node, old_file_info,
+                        include_previous_comments=False)
+                    import_stmt = old_file_info.body[start:end]
+                else:
+                    import_stmt = '%s\n' % _new_import_stmt(name_to_import,
+                                                            alias=None)
+                imports_to_add.add(import_stmt)
 
-        # PART THE THIRD:
-        #    Fix up imports
-        #
-        #    All the hard work is done above; we just need to actually do the
-        #    additions and removals.  (If we've removed the remainder of the
-        #    old file, _remove_empty_files_suggestor will clean up.)
         if imports_to_add:
             yield _add_contextless_import_patch(file_info, imports_to_add)
 
-        # TODO(benkraft): Remove imports from the old file, if applicable.
+    return suggestor
+
+
+def _remove_old_file_imports_suggestor(project_root, old_fullname):
+    """Suggestor to remove unused imports from old-file after moving a region.
+
+    When we move the definition of a symbol, it may have been the only user of
+    some imports in its file.  We need to remove those now-unused imports.
+    This runs after _fix_moved_region_suggestor, which probably added some of
+    the imports we will remove to the new location of the symbol.
+
+    Arguments:
+        project_root: as elsewhere
+        old_fullname: the pre-move fullname of the symbol we are moving
+    """
+    # TODO(benkraft): Instead of having three suggestors for removing imports
+    # that do slightly different things, have options for a single suggestor.
+    old_module, old_symbol = old_fullname.rsplit('.', 1)
+
+    def suggestor(filename, body):
+        """filename is relative to the value of --root."""
+        # We only need to operate on the old file.
+        if util.module_name_for_filename(filename) != old_module:
+            return
+
+        try:
+            file_info = util.File(filename, body)
+        except Exception as e:
+            raise khodemod.FatalError(filename, 0,
+                                      "Couldn't parse this file: %s" % e)
+
+        # Remove toplevel imports in the old file that are no longer used.
+        # Sadly, it's difficult to determine which ones might be at all related
+        # to the moved code, so we just remove anything that looks unused.
+        # TODO(benkraft): Be more precise so we don't touch unrelated things.
+        unused_imports, implicitly_used_imports = _unused_imports(
+            _compute_all_imports(file_info, toplevel_only=True), file_info)
+        for imp in implicitly_used_imports:
+            yield khodemod.WarningInfo(
+                filename, imp.start, "This import may be used implicitly.")
+        for imp in unused_imports:
+            yield _remove_import_patch(imp, file_info)
+
+    return suggestor
+
+
+def _remove_moved_region_late_imports_suggestor(project_root, new_fullname):
+    """Suggestor to remove unused imports after moving a region.
+
+    When we move the definition of a symbol, it may have imported its new
+    module as a "late-import"; this suggestor removes any such import.
+    It runs after _fix_moved_region_suggestor and
+    _remove_old_file_imports_suggestor, and only operates on the new file.
+    TODO(benkraft): We should also remove late imports if the new file also
+    imported the same module at the toplevel.
+
+    Arguments:
+        project_root: as elsewhere
+        new_fullname: the post-move fullname of the symbol we are moving
+    """
+    new_module, new_symbol = new_fullname.rsplit('.', 1)
+
+    def suggestor(filename, body):
+        """filename is relative to the value of --root."""
+        # We only need to operate on the new file; that's where the moved
+        # region will be by now.
+        if util.module_name_for_filename(filename) != new_module:
+            return
+
+        try:
+            file_info = util.File(filename, body)
+        except Exception as e:
+            raise khodemod.FatalError(filename, 0,
+                                      "Couldn't parse this file: %s" % e)
+
+        # Find the region we moved.
+        toplevel_names_in_new_file = util.toplevel_names(file_info)
+        if new_symbol not in toplevel_names_in_new_file:
+            raise khodemod.FatalError(filename, 0,
+                                      "Could not find symbol '%s' in "
+                                      "'%s': maybe it's defined weirdly?"
+                                      % (new_symbol, new_module))
+        moved_node = toplevel_names_in_new_file[new_symbol]
+
+        # Remove imports in the moved region itself that are no longer used.
+        # This should probably just be imports of new_module, or things that
+        # got us it, so we only look at those.
+        unused_imports, implicitly_used_imports = _unused_imports(
+            {imp for imp in _compute_all_imports(
+                file_info, within_node=moved_node)
+             if _import_provides_module(imp, new_module)},
+            file_info, within_node=moved_node)
+        for imp in implicitly_used_imports:
+            yield khodemod.WarningInfo(
+                filename, imp.start, "This import may be used implicitly.")
+        for imp in unused_imports:
+            yield _remove_import_patch(imp, file_info)
 
     return suggestor
 
@@ -1173,6 +1347,18 @@ def make_fixes(old_fullnames, new_fullname, import_alias=None,
                     project_root, oldname, newname)
                 frontend.run_suggestor(
                     fix_moved_region_suggestor, root=project_root)
+
+                remove_old_file_imports_suggestor = (
+                    _remove_old_file_imports_suggestor(project_root, oldname))
+                frontend.run_suggestor(
+                    remove_old_file_imports_suggestor, root=project_root)
+
+                remove_moved_region_late_imports_suggestor = (
+                    _remove_moved_region_late_imports_suggestor(
+                        project_root, newname))
+                frontend.run_suggestor(
+                    remove_moved_region_late_imports_suggestor,
+                    root=project_root)
 
         log("===== Updating references of %s to %s =====" % (oldname, newname))
         if is_symbol:

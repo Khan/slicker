@@ -52,6 +52,34 @@ class TestBase(unittest.TestCase):
         self.assertFalse(os.path.exists(self.join(filename)))
 
 
+class ImportProvidesModuleTest(unittest.TestCase):
+    def _create_import(self, import_text):
+        """Return an Import object for the given text."""
+        (imp,) = list(slicker._compute_all_imports(
+            util.File('some_file.py', import_text)))
+        return imp
+
+    def test_explicit_imports(self):
+        self.assertTrue(slicker._import_provides_module(
+            self._create_import('import foo.bar'), 'foo.bar'))
+        self.assertTrue(slicker._import_provides_module(
+            self._create_import('import foo.bar as baz'), 'foo.bar'))
+        self.assertTrue(slicker._import_provides_module(
+            self._create_import('from foo import bar'), 'foo.bar'))
+
+    def test_implicit_imports(self):
+        self.assertTrue(slicker._import_provides_module(
+            self._create_import('import foo.baz'), 'foo.bar'))
+
+    def test_non_imports(self):
+        self.assertFalse(slicker._import_provides_module(
+            self._create_import('import foo.baz as qux'), 'foo.bar'))
+        self.assertFalse(slicker._import_provides_module(
+            self._create_import('from foo import baz'), 'foo.bar'))
+        self.assertFalse(slicker._import_provides_module(
+            self._create_import('import qux.foo.bar'), 'foo.bar'))
+
+
 class LocalNamesFromFullNamesTest(unittest.TestCase):
     def _assert_localnames(self, actual, expected):
         """Assert imports match the given tuples, but with certain changes."""
@@ -783,11 +811,20 @@ class FixUsesTest(TestBase):
             'same_prefix',
             'foo.bar.some_function', 'foo.baz.some_function')
 
-    @unittest.skip("TODO(benkraft): We shouldn't consider this a conflict.")
+    @unittest.skip("TODO(benkraft): We shouldn't consider this a conflict, "
+                   "because we'll remove the only conflicting import.")
     def test_same_alias(self):
         self.create_module('foo')
         self.run_test(
             'same_alias',
+            'foo.some_function', 'bar.some_function', import_alias='foo')
+
+    @unittest.skip("TODO(benkraft): We shouldn't consider this a conflict, "
+                   "because we don't need to touch this file anyway.")
+    def test_same_alias_unused(self):
+        self.create_module('foo')
+        self.run_test(
+            'same_alias_unused',
             'foo.some_function', 'bar.some_function', import_alias='foo')
 
     def test_implicit(self):
@@ -928,8 +965,6 @@ class FixUsesTest(TestBase):
 
 
 class FixMovedRegionSuggestorTest(TestBase):
-    # TODO(benkraft): In many cases (mostly noted below), we should remove
-    # imports, but don't yet.
     def test_rename_references_self(self):
         self.write_file('foo.py',
                         ('something = 1\n'
@@ -971,7 +1006,37 @@ class FixMovedRegionSuggestorTest(TestBase):
                            '    return slow_fib(n - 1) + slow_fib(n - 2)\n'))
         self.assertFalse(self.error_output)
 
-    def test_references_old_module(self):
+    def test_rename_and_move_references_self_via_self_import(self):
+        self.write_file('foo.py',
+                        ('import foo\n\n\n'
+                         'something = 1\n'
+                         'def fib(n):\n'
+                         '    return foo.fib(n - 1) + foo.fib(n - 2)\n'))
+        slicker.make_fixes(['foo.fib'], 'newfoo.slow_fib',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          'something = 1\n')
+        self.assertFileIs('newfoo.py',
+                          ('def slow_fib(n):\n'
+                           '    return slow_fib(n - 1) + slow_fib(n - 2)\n'))
+        self.assertFalse(self.error_output)
+
+    def test_rename_and_move_references_self_via_late_self_import(self):
+        self.write_file('foo.py',
+                        ('something = 1\n'
+                         'def fib(n):\n'
+                         '    import foo\n'
+                         '    return foo.fib(n - 1) + foo.fib(n - 2)\n'))
+        slicker.make_fixes(['foo.fib'], 'newfoo.slow_fib',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          'something = 1\n')
+        self.assertFileIs('newfoo.py',
+                          ('def slow_fib(n):\n'
+                           '    return slow_fib(n - 1) + slow_fib(n - 2)\n'))
+        self.assertFalse(self.error_output)
+
+    def test_uses_old_module(self):
         self.write_file('foo.py',
                         ('const = 1\n\n\n'
                          'def f():\n'
@@ -991,7 +1056,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            '    return foo.f(foo.const)\n'))
         self.assertFalse(self.error_output)
 
-    def test_references_old_module_already_imported(self):
+    def test_uses_old_module_already_imported(self):
         self.write_file('foo.py',
                         ('const = 1\n\n\n'
                          'def f():\n'
@@ -1019,7 +1084,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            '    return foo.f(foo.const)\n'))
         self.assertFalse(self.error_output)
 
-    def test_references_old_module_imports_self(self):
+    def test_uses_old_module_imports_self(self):
         self.write_file('foo.py',
                         ('import foo\n\n\n'
                          'const = 1\n\n\n'
@@ -1030,8 +1095,7 @@ class FixMovedRegionSuggestorTest(TestBase):
         slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
-                          ('import foo\n\n\n'
-                           'const = 1\n\n\n'
+                          ('const = 1\n\n\n'
                            'def f(x):\n'
                            '    pass\n'))
         self.assertFileIs('newfoo.py',
@@ -1041,7 +1105,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            '    return foo.f(foo.const)\n'))
         self.assertFalse(self.error_output)
 
-    def test_references_new_module(self):
+    def test_uses_new_module(self):
         self.write_file('foo.py',
                         ('import newfoo\n\n\n'
                          'def myfunc():\n'
@@ -1052,8 +1116,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                          '    pass\n'))
         slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
-        # TODO(benkraft): Remove last import and file
-        # self.assertFileIsNot('foo.py')
+        self.assertFileIsNot('foo.py')
         self.assertFileIs('newfoo.py',
                           ('const = 1\n\n\n'
                            'def f(x):\n'
@@ -1062,7 +1125,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            '    return f(const)\n'))
         self.assertFalse(self.error_output)
 
-    def test_references_new_module_via_alias(self):
+    def test_uses_new_module_via_alias(self):
         self.write_file('foo.py',
                         ('import newfoo as bar\n\n\n'
                          'def myfunc():\n'
@@ -1073,8 +1136,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                          '    pass\n'))
         slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
-        # TODO(benkraft): Remove last import and file
-        # self.assertFileIsNot('foo.py')
+        self.assertFileIsNot('foo.py')
         self.assertFileIs('newfoo.py',
                           ('const = 1\n\n\n'
                            'def f(x):\n'
@@ -1083,7 +1145,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            '    return f(const)\n'))
         self.assertFalse(self.error_output)
 
-    def test_references_new_module_via_symbol_import(self):
+    def test_uses_new_module_via_symbol_import(self):
         self.write_file('foo.py',
                         ('from newfoo import const\n'
                          'from newfoo import f\n\n\n'
@@ -1095,8 +1157,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                          '    pass\n'))
         slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
-        # TODO(benkraft): Remove last import and file
-        # self.assertFileIsNot('foo.py')
+        self.assertFileIsNot('foo.py')
         self.assertFileIs('newfoo.py',
                           ('const = 1\n\n\n'
                            'def f():\n'
@@ -1105,7 +1166,49 @@ class FixMovedRegionSuggestorTest(TestBase):
                            '    return f(const)\n'))
         self.assertFalse(self.error_output)
 
-    def test_references_new_module_imports_self(self):
+    def test_uses_old_module_via_implicit_self_import(self):
+        self.write_file('foo/__init__.py', '')
+        self.write_file('foo/bar.py',
+                        ('import foo.baz\n\n\n'
+                         'def f():\n'
+                         '    pass\n\n\n'
+                         'def myfunc():\n'
+                         '    return foo.bar.f()\n'))
+        slicker.make_fixes(['foo.bar.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo/bar.py',
+                          ('def f():\n'
+                           '    pass\n'))
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           # TODO(benkraft): Should we fix this up to foo.bar?
+                           'import foo.baz\n\n\n'
+                           'def myfunc():\n'
+                           '    return foo.bar.f()\n'))
+        self.assertFalse(self.error_output)
+
+    def test_uses_new_module_via_implicit_import(self):
+        self.write_file('foo.py',
+                        ('import newfoo.baz\n\n\n'
+                         'def myfunc():\n'
+                         '    return newfoo.bar.f(newfoo.bar.const)\n'))
+        self.write_file('newfoo/__init__.py', '')
+        self.write_file('newfoo/bar.py',
+                        ('const = 1\n\n\n'
+                         'def f(x):\n'
+                         '    pass\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.bar.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo/bar.py',
+                          ('const = 1\n\n\n'
+                           'def f(x):\n'
+                           '    pass\n\n\n'
+                           'def myfunc():\n'
+                           '    return f(const)\n'))
+        self.assertFalse(self.error_output)
+
+    def test_uses_new_module_imports_self(self):
         self.write_file('foo.py',
                         ('import newfoo\n\n\n'
                          'def myfunc():\n'
@@ -1117,8 +1220,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                          '    return newfoo.const\n'))
         slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
-        # TODO(benkraft): Remove last import and file
-        # self.assertFileIsNot('foo.py')
+        self.assertFileIsNot('foo.py')
         self.assertFileIs('newfoo.py',
                           ('import newfoo\n\n\n'
                            'const = 1\n\n\n'
@@ -1140,8 +1242,7 @@ class FixMovedRegionSuggestorTest(TestBase):
         slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
-                          ('import newfoo\n\n\n'  # TODO(benkraft): remove
-                           'def f(x):\n'
+                          ('def f(x):\n'
                            '    pass\n'))
         self.assertFileIs('newfoo.py',
                           ('from __future__ import absolute_import\n\n'
@@ -1162,8 +1263,7 @@ class FixMovedRegionSuggestorTest(TestBase):
         slicker.make_fixes(['foo.myfunc'], 'newfoo.mynewerfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
-                          ('import newfoo\n\n\n'  # TODO(benkraft): remove
-                           'def f(x):\n'
+                          ('def f(x):\n'
                            '    pass\n'))
         self.assertFileIs('newfoo.py',
                           ('from __future__ import absolute_import\n\n'
@@ -1186,8 +1286,7 @@ class FixMovedRegionSuggestorTest(TestBase):
         slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
-                          ('import newfoo\n\n\n'  # TODO(benkraft): remove
-                           'def f(g):\n'
+                          ('def f(g):\n'
                            '    return g(1)\n'))
         self.assertFileIs('newfoo.py',
                           ('from __future__ import absolute_import\n\n'
@@ -1211,7 +1310,6 @@ class FixMovedRegionSuggestorTest(TestBase):
         self.assertFileIs('newfoo.py',
                           ('const = 1\n\n\n'
                            'def myfunc():\n'
-                           '    import newfoo\n'  # TODO(benkraft): remove
                            '    return const\n'))
 
     def test_late_import_elsewhere(self):
@@ -1233,8 +1331,302 @@ class FixMovedRegionSuggestorTest(TestBase):
         self.assertFileIs('newfoo.py',
                           ('const = 1\n\n\n'
                            'def myfunc():\n'
-                           '    import newfoo\n'  # TODO(benkraft): remove
                            '    return const\n'))
+
+    def test_uses_other_import(self):
+        self.write_file('foo.py',
+                        ('import bar\n\n\n'
+                         'def myfunc():\n'
+                         '    return bar.unrelated_function()\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import bar\n\n\n'
+                           'def myfunc():\n'
+                           '    return bar.unrelated_function()\n'))
+
+    def test_uses_other_aliased_import(self):
+        self.write_file('foo.py',
+                        ('import baz as bar\n\n\n'
+                         'def myfunc():\n'
+                         '    return bar.unrelated_function()\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import baz as bar\n\n\n'
+                           'def myfunc():\n'
+                           '    return bar.unrelated_function()\n'))
+
+    def test_uses_other_symbol_import(self):
+        self.write_file('foo.py',
+                        ('from bar import unrelated_function\n\n\n'
+                         'def myfunc():\n'
+                         '    return unrelated_function()\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'from bar import unrelated_function\n\n\n'
+                           'def myfunc():\n'
+                           '    return unrelated_function()\n'))
+
+    def test_uses_other_implicit_import(self):
+        self.write_file('foo.py',
+                        ('import bar.baz\n\n\n'
+                         'def myfunc():\n'
+                         '    return bar.qux.unrelated_function()\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           # TODO(benkraft): Should we fix this up to bar.qux?
+                           'import bar.baz\n\n\n'
+                           'def myfunc():\n'
+                           '    return bar.qux.unrelated_function()\n'))
+
+    def test_uses_other_existing_import(self):
+        self.write_file('foo.py',
+                        ('import bar\n\n\n'
+                         'def myfunc():\n'
+                         '    return bar.unrelated_function()\n'))
+        self.write_file('newfoo.py',
+                        ('from __future__ import absolute_import\n\n'
+                         'import bar\n\n\n'
+                         'const = bar.thingy\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import bar\n\n\n'
+                           'const = bar.thingy\n\n\n'
+                           'def myfunc():\n'
+                           '    return bar.unrelated_function()\n'))
+
+    def test_uses_other_import_with_mismatched_name(self):
+        self.write_file('foo.py',
+                        ('import bar\n\n\n'
+                         'def myfunc():\n'
+                         '    return bar.unrelated_function()\n'))
+        self.write_file('newfoo.py',
+                        ('from __future__ import absolute_import\n\n'
+                         'import bar as baz\n\n\n'
+                         'const = baz.thingy\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import bar as baz\n\n\n'
+                           'const = baz.thingy\n\n\n'
+                           'def myfunc():\n'
+                           '    return baz.unrelated_function()\n'))
+
+    def test_uses_other_existing_symbol_import(self):
+        self.write_file('foo.py',
+                        ('from bar import unrelated_function\n\n\n'
+                         'def myfunc():\n'
+                         '    return unrelated_function()\n'))
+        self.write_file('newfoo.py',
+                        ('from __future__ import absolute_import\n\n'
+                         'from bar import unrelated_function\n\n\n'
+                         'const = unrelated_function()\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'from bar import unrelated_function\n\n\n'
+                           'const = unrelated_function()\n\n\n'
+                           'def myfunc():\n'
+                           '    return unrelated_function()\n'))
+
+    def test_uses_other_existing_symbol_import_mismatch(self):
+        self.write_file('foo.py',
+                        ('import bar\n\n\n'
+                         'def myfunc():\n'
+                         '    return bar.unrelated_function()\n'))
+        self.write_file('newfoo.py',
+                        ('from __future__ import absolute_import\n\n'
+                         'from bar import unrelated_function\n\n\n'
+                         'const = unrelated_function()\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import bar\n'
+                           'from bar import unrelated_function\n\n\n'
+                           'const = unrelated_function()\n\n\n'
+                           'def myfunc():\n'
+                           '    return bar.unrelated_function()\n'))
+
+    def test_uses_other_import_with_similar_existing_import(self):
+        self.write_file('foo.py',
+                        ('import bar.baz\n\n\n'
+                         'def myfunc():\n'
+                         '    return bar.baz.unrelated_function()\n'))
+        self.write_file('newfoo.py',
+                        ('from __future__ import absolute_import\n\n'
+                         'import bar.qux\n\n\n'
+                         'const = bar.qux.thingy\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import bar.baz\n'
+                           'import bar.qux\n\n\n'
+                           'const = bar.qux.thingy\n\n\n'
+                           'def myfunc():\n'
+                           '    return bar.baz.unrelated_function()\n'))
+
+    def test_uses_other_existing_implicit_import(self):
+        self.write_file('foo.py',
+                        ('import bar.baz\n\n\n'
+                         'def myfunc():\n'
+                         '    return bar.qux.unrelated_function()\n'))
+        self.write_file('newfoo.py',
+                        ('from __future__ import absolute_import\n\n'
+                         'import bar.baz\n\n\n'
+                         'const = bar.qux.thingy\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           # TODO(benkraft): Should we fix this up to bar.qux?
+                           'import bar.baz\n\n\n'
+                           'const = bar.qux.thingy\n\n\n'
+                           'def myfunc():\n'
+                           '    return bar.qux.unrelated_function()\n'))
+
+    def test_uses_other_existing_implicit_import_used_explicitly(self):
+        self.write_file('foo.py',
+                        ('import bar.baz\n\n\n'
+                         'def myfunc():\n'
+                         '    return bar.qux.unrelated_function()\n'))
+        self.write_file('newfoo.py',
+                        ('from __future__ import absolute_import\n\n'
+                         'import bar.baz\n\n\n'
+                         'const = bar.baz.thingy\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           # TODO(benkraft): Should we fix this up to bar.qux?
+                           'import bar.baz\n\n\n'
+                           'const = bar.baz.thingy\n\n\n'
+                           'def myfunc():\n'
+                           '    return bar.qux.unrelated_function()\n'))
+
+    def test_uses_other_implicit_import_with_existing_explicit_import(self):
+        self.write_file('foo.py',
+                        ('import bar.baz\n\n\n'
+                         'def myfunc():\n'
+                         '    return bar.qux.unrelated_function()\n'))
+        self.write_file('newfoo.py',
+                        ('from __future__ import absolute_import\n\n'
+                         'import bar.qux\n\n\n'
+                         'const = bar.qux.thingy\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           # TODO(benkraft): We shouldn't add this.
+                           'import bar.baz\n'
+                           'import bar.qux\n\n\n'
+                           'const = bar.qux.thingy\n\n\n'
+                           'def myfunc():\n'
+                           '    return bar.qux.unrelated_function()\n'))
+
+    @unittest.skip("""Ideally, we wouldn't remove this.""")
+    def test_doesnt_touch_unrelated_import_in_old(self):
+        self.write_file('foo.py',
+                        ('import unrelated\n\n\n'
+                         'def myfunc():\n'
+                         '    return 1\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          ('import unrelated\n'))
+        self.assertFileIs('newfoo.py',
+                          ('def myfunc():\n'
+                           '    return 1\n'))
+
+    def test_doesnt_touch_unrelated_import_in_new(self):
+        self.write_file('foo.py',
+                        ('def myfunc():\n'
+                         '    return 1\n'))
+        self.write_file('newfoo.py',
+                        ('import unrelated\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIsNot('foo.py')
+        self.assertFileIs('newfoo.py',
+                          ('import unrelated\n\n\n'
+                           'def myfunc():\n'
+                           '    return 1\n'))
+
+    def test_uses_other_import_used_elsewhere(self):
+        self.write_file('foo.py',
+                        ('import bar\n\n\n'
+                         'const = bar.something\n\n\n'
+                         'def myfunc():\n'
+                         '    return bar.unrelated_function()\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          ('import bar\n\n\n'
+                           'const = bar.something\n'))
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import bar\n\n\n'
+                           'def myfunc():\n'
+                           '    return bar.unrelated_function()\n'))
+
+    def test_uses_other_import_related_import_used_elsewhere(self):
+        self.write_file('foo.py',
+                        ('import bar.baz\n'
+                         'import bar.qux\n\n\n'
+                         'const = bar.baz.something\n\n\n'
+                         'def myfunc():\n'
+                         '    return bar.qux.unrelated_function()\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          ('import bar.baz\n\n\n'
+                           'const = bar.baz.something\n'))
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import bar.qux\n\n\n'
+                           'def myfunc():\n'
+                           '    return bar.qux.unrelated_function()\n'))
+
+    def test_uses_other_import_used_implicitly_elsewhere(self):
+        self.write_file('foo.py',
+                        ('import bar.baz\n\n\n'
+                         'const = bar.qux.something\n\n\n'
+                         'def myfunc():\n'
+                         '    return bar.baz.unrelated_function()\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          ('import bar.baz\n\n\n'
+                           'const = bar.qux.something\n'))
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import bar.baz\n\n\n'
+                           'def myfunc():\n'
+                           '    return bar.baz.unrelated_function()\n'))
 
 
 class ImportSortTest(TestBase):

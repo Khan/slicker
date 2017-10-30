@@ -148,7 +148,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                         ('"""A file with the old version of foo."""\n'
                          'import quux\n\n'
                          'def _secretfunc():\n'
-                         '    return "secretmonkeys"\n\n\n'
+                         '    return quux.secretmonkeys\n\n\n'
                          '# Does some stuff\n'
                          '# Be careful calling it!\n\n'
                          'def myfunc():\n'
@@ -161,14 +161,14 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                         ('"""A file with the new version of foo."""\n'
                          'import quux\n\n'
                          'def otherfunc():\n'
-                         '    return 71\n'))
+                         '    return quux.value\n'))
         slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py',
                           ('"""A file with the new version of foo."""\n'
                            'import quux\n\n'
                            'def otherfunc():\n'
-                           '    return 71\n\n\n'
+                           '    return quux.value\n\n\n'
                            '# Does some stuff\n'
                            '# Be careful calling it!\n\n'
                            'def myfunc():\n'
@@ -178,7 +178,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                           ('"""A file with the old version of foo."""\n'
                            'import quux\n\n'
                            'def _secretfunc():\n'
-                           '    return "secretmonkeys"\n\n\n'
+                           '    return quux.secretmonkeys\n\n\n'
                            '# Here is another function.\n'
                            'def otherfunc():\n'
                            '    return 1 + 1\n'))
