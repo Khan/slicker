@@ -945,7 +945,11 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
                 imports_to_add.add(name_to_import)
 
         # PART THE THIRD:
-        #    Add new imports, if necessary.
+        #    Fix up imports
+        #
+        #    All the hard work is done above; we just need to actually do the
+        #    additions and removals.  (If we've removed the remainder of the
+        #    old file, _remove_empty_files_suggestor will clean up.)
         if imports_to_add:
             yield _add_contextless_import_patch(
                 file_info, ['import %s' % imp for imp in imports_to_add])
@@ -953,6 +957,28 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
         # TODO(benkraft): Remove imports from the old file, if applicable.
 
     return suggestor
+
+
+def _remove_empty_files_suggestor(filename, body):
+    """Suggestor to remove any empty files we leave behind.
+
+    TODO(benkraft): Should we also warn if we leave a file that is only
+    docstrings/comments?
+    """
+    if os.path.basename(filename) == '__init__.py':
+        # Ignore __init__.py files, since they're often intentionally empty.
+        return
+    if not body.strip():
+        yield khodemod.Patch(filename, body, None, 0, len(body))
+
+
+def _remove_leading_whitespace_suggestor(filename, body):
+    """Suggestor to remove any leading whitespace we leave behind."""
+    lstripped_body = body.lstrip()
+    if lstripped_body != body:
+        whitespace_len = len(body) - len(lstripped_body)
+        yield khodemod.Patch(filename, body[:whitespace_len], '',
+                             0, whitespace_len)
 
 
 def _import_sort_suggestor(project_root):
@@ -1039,11 +1065,16 @@ def make_fixes(old_fullnames, new_fullname, import_alias=None,
             oldname, newname, name_to_import, import_alias)
         frontend.run_suggestor(fix_uses_suggestor, root=project_root)
 
-    log("====== Resorting imports ======")
+    log("===== Cleaning up empty files & whitespace =====")
+    frontend.run_suggestor_on_modified_files(_remove_empty_files_suggestor)
+    frontend.run_suggestor_on_modified_files(
+        _remove_leading_whitespace_suggestor)
+
+    log("===== Resorting imports =====")
     import_sort_suggestor = _import_sort_suggestor(project_root)
     frontend.run_suggestor_on_modified_files(import_sort_suggestor)
 
-    log("======== Move complete! =======")
+    log("===== Move complete! =====")
 
 
 def main():

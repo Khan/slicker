@@ -108,13 +108,9 @@ def move_symbol_suggestor(project_root, old_fullname, new_fullname):
                 filename, definition_region, new_definition_region, start, end)
         else:
             # Remove the region from the old file.
-            if start == 0 and end == len(body):
-                # If we're removing the rest of the file, delete it.
-                yield khodemod.Patch(filename, body, None, start, end)
-            else:
-                # TODO(benrkaft): Should we check on newlines here too?
-                yield khodemod.Patch(
-                    filename, definition_region, '', start, end)
+            # (If we've removed the remainder of the file,
+            # _remove_empty_files_suggestor will clean up.)
+            yield khodemod.Patch(filename, definition_region, '', start, end)
 
             # Add the region to the new file.
             new_filename = util.filename_for_module_name(new_module)
