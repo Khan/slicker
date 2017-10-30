@@ -19,12 +19,15 @@ class TestBase(unittest.TestCase):
             tempfile.mkdtemp(prefix=(self.__class__.__name__ + '.')))
         self.error_output = []
         # Poor-man's mock.
-        self._old_emit = khodemod.emit
+        _old_emit = khodemod.emit
+
+        def restore_emit():
+            khodemod.emit = _old_emit
+        self.addCleanup(restore_emit)
         khodemod.emit = lambda txt: self.error_output.append(txt)
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir)
-        khodemod.emit = self._old_emit
 
     def join(self, *args):
         return os.path.join(self.tmpdir, *args)
