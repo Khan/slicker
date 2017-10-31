@@ -294,23 +294,16 @@ def _check_import_conflicts(file_info, added_name, is_alias):
                 if _dotted_starts_with(added_name, imp.alias)}
 
 
-def _imports_to_remove(localnames_for_old_fullname, new_localname,
-                       used_localnames, file_info):
+def _unused_imports(imports, file_info):
     """Decide what imports we can remove.
 
+    Note that this should be run after the patches to references in the file
+    have been applied, i.e. in a separate suggestor.
+
     Arguments:
-        localnames_for_old_fullname: set of LocalNames that reflect
-           how old_fullname -- the pre-move fullname of the symbol
-           that we're moving -- is potentially referred to in the
-           given file.  (Usually this set will have size 1, but see
-           docstring for _determine_localnames().)
-        new_localname: the post-move localname of the symbol that we're
-           moving.
-        used_localnames: the set of localnames that *actually* occurred
-           in this file.  This is a subset of localnames_for_old_fullname,
-           which holds those localnames which could legally occur in
-           the file but may not.  (More precisely, it's a subset of
-           {ln.localname for ln in localnames_for_old_fullname}.)
+        imports: set of imports to consider removing.  These should likely be
+            the imports that got us the symbol whose references you're
+            updating.
         file_info: the util.File object.
 
     Returns (set of imports we can remove,
@@ -321,73 +314,40 @@ def _imports_to_remove(localnames_for_old_fullname, new_localname,
     but weird python.
     """
     # Decide whether to keep the old import if we changed references to it.
-    removable_imports = set()
-    maybe_removable_imports = set()
-    definitely_kept_imports = set()
-    for (fullname, localname, imp) in localnames_for_old_fullname:
-        if imp is None:
-            # If this localname didn't correspond to an import, ignore it.
-            continue
-        if new_localname == localname:
-            # This can happen if we're moving foo.myfunc to bar.myfunc
-            # and this file does 'import foo as bar; bar.myfunc()'.
-            # In that case the localname is unchanged (it's bar.myfunc
-            # both before and after the move) and all we need to do is
-            # change the import line by removing the old import and
-            # adding the new one.  (We only do the removing here.)
-            removable_imports.add(imp)
-        elif localname in used_localnames:
-            # This means that this localname is actually used in our
-            # file.  We need to check if there are any other names in
-            # this file that depend on `imp`.  e.g. we are moving
-            # foo.myfunc to bar.myfunc, and our current file has
-            # 'x = foo.myfunc()'.  Our question is, does it also have
-            # code like 'y = foo.myotherfunc()'?  If so, we can't
-            # remove the 'import foo' since it has this other client.
-            # Otherwise we can since *all* uses of foo are changing to
-            # be uses of bar.
+    unused_imports = set()
+    implicitly_used_imports = set()
+    used_imports = set()
+    for imp in imports:
+        # This includes all names that we might be *implicitly*
+        # accessing via this import, due to the python quirk
+        # around 'import foo.bar; foo.baz.myfunc()' working.
+        implicitly_used_names = _names_starting_with(
+            imp.alias.split('.', 1)[0], file_info.tree)
+        # This is only those names that we are explicitly accessing
+        # via this import, i.e. not depending on the quirk.
+        explicitly_referenced_names = [
+            name for name in implicitly_used_names
+            if _dotted_starts_with(name, imp.alias)]
 
-            # This includes all names that we might be *implicitly*
-            # accessing via this import, due to the python quirk
-            # around 'import foo.bar; foo.baz.myfunc()' working.
-            relevant_names = set(_names_starting_with(
-                imp.alias.split('.', 1)[0], file_info.tree))
-            # This is only those names that we are explicitly accessing
-            # via this import, i.e. not depending on the quirk.
-            explicit_names = {
-                name for name in relevant_names
-                if _dotted_starts_with(name, imp.alias)}
-            handled_names = {
-                name for name in relevant_names
-                if _dotted_starts_with(name, localname)}
-
-            if explicit_names - handled_names:
-                # If we make use of this import, other than for the
-                # moved symbol, we need to keep it.
-                definitely_kept_imports.add(imp)
-            elif relevant_names - handled_names:
-                # If we make use of this import but only implicitly
-                # (via the quirk), we may be able to remove it or we
-                # may not, depending on whether anyone else implicitly
-                # (or explicitly) provides the same symbol.
-                maybe_removable_imports.add(imp)
-            else:
-                removable_imports.add(imp)
+        if explicitly_referenced_names:
+            used_imports.add(imp)
+        elif implicitly_used_names:
+            implicitly_used_imports.add(imp)
         else:
-            definitely_kept_imports.add(imp)
+            unused_imports.add(imp)
 
-    # Now, if there was an import we were considering removing, and we are
-    # keeping a different import that gets us the same things, we can
-    # definitely remove the former.
-    for maybe_removable_imp in list(maybe_removable_imports):
-        for kept_imp in definitely_kept_imports:
-            if (maybe_removable_imp.alias.split('.')[0] ==
-                    kept_imp.alias.split('.')[0]):
-                maybe_removable_imports.remove(maybe_removable_imp)
-                removable_imports.add(maybe_removable_imp)
+    # Now, if there was an import we were considering removing but which might
+    # be used implicitly, i.e., via the quirk, and we are keeping a different
+    # import that gets us the same things, we can remove the former.
+    for maybe_removable_imp in list(implicitly_used_imports):
+        prefix = maybe_removable_imp.alias.split('.')[0]
+        for kept_imp in used_imports:
+            if _dotted_starts_with(kept_imp.alias, prefix):
+                implicitly_used_imports.remove(maybe_removable_imp)
+                unused_imports.add(maybe_removable_imp)
                 break
 
-    return (removable_imports, maybe_removable_imports)
+    return (unused_imports, implicitly_used_imports)
 
 
 def _choose_best_localname(file_info, fullname, name_to_import, import_alias):
@@ -396,7 +356,12 @@ def _choose_best_localname(file_info, fullname, name_to_import, import_alias):
     If there's already an import of fullname, we'll use it.  If not, we'll
     choose the best import to add, based on name_to_import and import_alias.
 
-    Returns: (the localname we should use, whether we should add an import).
+    Returns: (the localname we should use,
+              whether we need to add an import if we want to use it).
+
+    (Note that if _choose_best_localname suggests to add an import, but the
+    caller determines that we don't even need to add any references to this
+    localname, said caller should likely ignore us and not add an import.)
 
     TODO(benkraft): Perhaps we should instead return the full text of the
     import we should add, if applicable?
@@ -723,7 +688,9 @@ def _remove_import_patch(imp, file_info):
 # use-fixing suggestors and helpers to their own file.
 def _fix_uses_suggestor(old_fullname, new_fullname,
                         name_to_import, import_alias=None):
-    """The main suggestor to fix all references to a file.
+    """The suggestor to fix all references to a file or symbol.
+
+    Note that this does not fix imports; see _fix_imports_suggestor.
 
     Arguments:
         old_fullname: the pre-move fullname (module when moving a module,
@@ -749,9 +716,7 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
             raise khodemod.FatalError(filename, 0,
                                       "Couldn't parse this file: %s" % e)
 
-        # PART THE FIRST:
-        #    Set things up, do some simple checks, decide whether to operate.
-
+        # First, set things up, and do some checks.
         assert _dotted_starts_with(new_fullname, name_to_import), (
             "%s isn't a valid name to import -- not a prefix of %s" % (
                 name_to_import, new_fullname))
@@ -762,37 +727,75 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
         new_localname, need_new_import = _choose_best_localname(
             file_info, new_fullname, name_to_import, import_alias)
 
-        # PART THE SECOND:
-        #    Patch references to the symbol inline -- everything but imports.
+        # Now, patch references -- _replace_in_file does all the work.
         patches, used_localnames = _replace_in_file(
             file_info, old_fullname, old_localname_strings,
             new_fullname, new_localname)
         for patch in patches:
             yield patch
 
-        # PART THE THIRD:
-        #    Add/remove imports, if necessary.
+    return suggestor
 
-        # We didn't change anything that would require fixing imports.
-        if not used_localnames:
+
+def _fix_imports_suggestor(old_fullname, new_fullname,
+                           name_to_import, import_alias=None):
+    """The suggestor to fix up imports for changed references.
+
+    Note that this should run after _fix_uses_suggestor.
+
+    Arguments: same as _fix_uses_suggestor.
+    """
+    def suggestor(filename, body):
+        try:
+            file_info = util.File(filename, body)
+        except Exception as e:
+            raise khodemod.FatalError(filename, 0,
+                                      "Couldn't parse this file: %s" % e)
+
+        # First, set things up, and do some checks.
+        # TODO(benkraft): Don't recompute these; _fix_uses_suggestor has
+        # already done so.
+        old_localnames = _determine_localnames(old_fullname, file_info)
+        old_imports = {ln.imp for ln in old_localnames if ln.imp is not None}
+        try:
+            new_localname, need_new_import = _choose_best_localname(
+                file_info, new_fullname, name_to_import, import_alias)
+        except khodemod.FatalError:
+            # Since _fix_uses_suggestor has already made the same call, if it
+            # errors, we can just give up without reporting the error a second
+            # time.
+            # TODO(benkraft): Handle this sort of thing better, such as by not
+            # recomputing in the first place.
             return
 
-        removable_imports, maybe_removable_imports = _imports_to_remove(
-            old_localnames, new_localname, used_localnames, file_info)
+        # We didn't reference the moved symbol; nothing to patch.
+        # (Removing unused imports should be a no-op in that case,
+        # we don't want to add a new import.)
+        if not _names_starting_with(new_localname, file_info.tree):
+            return
 
-        for imp in maybe_removable_imports:
-            yield khodemod.WarningInfo(
-                filename, imp.start, "This import may be used implicitly.")
-        for imp in removable_imports:
+        # Next, remove imports, if any are now unused.
+        unused_imports, implicitly_used_imports = _unused_imports(
+            old_imports, file_info)
+
+        for imp in implicitly_used_imports:
+            # If we were using this import implicitly for the new symbol only,
+            # we can just remove it; the added import will cover us.
+            imp_prefix = imp.alias.split('.', 1)[0]
+            if need_new_import and _dotted_starts_with(
+                    new_localname, imp_prefix):
+                yield _remove_import_patch(imp, file_info)
+            else:
+                yield khodemod.WarningInfo(
+                    filename, imp.start, "This import may be used implicitly.")
+        for imp in unused_imports:
             yield _remove_import_patch(imp, file_info)
 
-        # Add a new import, if necessary.
+        # Finally, add a new import, if necessary.
         if need_new_import:
             # Decide what the import will say.
             import_stmt = _new_import_stmt(name_to_import, import_alias)
 
-            old_imports = {
-                ln.imp for ln in old_localnames if ln.imp is not None}
             # Decide where to add it.  The issue here is that we may
             # be replacing a "late import" (an import inside a
             # function) in which case we want the new import to be
@@ -1065,6 +1068,14 @@ def make_fixes(old_fullnames, new_fullname, import_alias=None,
         fix_uses_suggestor = _fix_uses_suggestor(
             oldname, newname, name_to_import, import_alias)
         frontend.run_suggestor(fix_uses_suggestor, root=project_root)
+
+        fix_imports_suggestor = _fix_imports_suggestor(
+            oldname, newname, name_to_import, import_alias)
+        # NOTE(benkraft): We need to run this even on unmodified files,
+        # because if we're moving 'foo.myfunc' to 'bar.myfunc' and some
+        # file had 'import foo as bar' we need to fix an import, but the
+        # in-file reference ('bar.myfunc') remains the same.
+        frontend.run_suggestor(fix_imports_suggestor, root=project_root)
 
     log("===== Cleaning up empty files & whitespace =====")
     frontend.run_suggestor_on_modified_files(_remove_empty_files_suggestor)
