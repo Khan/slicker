@@ -108,6 +108,9 @@ Import = collections.namedtuple(
 # in a file that had 'from foo import bar', we'd get a LocalName
 # with name='foo.bar.some_function' and localname='bar.some_function'.
 #  See test cases for more examples.
+# TODO(benkraft): It's super confusing that both the tuple and its
+# .localname are called the "localname" -- see for example
+# _localnames_from_localnames.  Rename to something bettter.
 LocalName = collections.namedtuple(
     'LocalName', ['fullname', 'localname', 'imp'])
 
@@ -144,57 +147,169 @@ def _compute_all_imports(file_info, within_node=None, toplevel_only=False):
     return imports
 
 
-def _determine_localnames(fullname, file_info,
-                          within_node=None, toplevel_only=False):
-    """Return info about the localnames by which `fullname` goes in this file.
+def _localnames_from_fullnames(file_info, fullnames, imports=None):
+    """Return LocalNames by which the fullnames may go in this file.
 
-    within_node and toplevel_only are passed through to _compute_all_imports.
+    If passed, we use the imports from 'imports', which should be a set
+    of imports; otherwise we use all the imports from the file_info.
 
-    Returns a set of LocalName namedtuples.
+    Returns an iterable of LocalName namedtuples.
 
-    It might seem like this set should always have size 1, but there
-    are several cases it might have more:
-    1) If you do 'import foo.bar' and 'import foo.baz', then
-       'foo.bar.myfunc' is actually provided through *both*
-       imports (a quirk of python), leading to two elements
-       in the set.  We only care about the first element,
-       of course.
+    See also _localnames_from_localnames, which returns more or less
+    the same data, but starts from localnames instead of fullnames.
+
+    For fullnames of symbols defined in this file, we include a
+    LocalName(fullname, unqualified_name, None) because that's another way
+    you can reference the fullname in this file.
+
+    Note that 'import foo.baz' also makes 'foo.bar.myfunc' available
+    (a quirk of python) so we have to include that as well -- we call
+    this an "implicit import".  If you also did 'import foo.bar', we
+    don't bother -- we only include the "best" name when we can --
+    but if you did 'from foo import bar' you you actually still have
+    access to 'foo.bar.myfunc' as both 'bar.myfunc' and 'foo.bar.myfunc'
+    so we return a LocalName for each.  (Hopefully the latter is unused.)
+
+    If a fullname is not made available by any import in this file,
+    we won't return any corresponding LocalNames.  It might seem
+    like this set should always have at most one LocalName for
+    each fullname, but there are several cases it might have more:
+    1) In the "quirk of python" case mentioned above.
     2) If you do 'import foo.bar' and 'from foo import bar',
        then 'foo.bar.myfunc' is provided through both imports.
        I hope you don't do that.
-    3) If you do '   import foo.bar' several times in several
+    3) Similarly, if the fullname is defined in this file, and
+       the file also imports itself, you'll get one LocalName
+       from the import and one for the unqualified name.  I
+       hope you don't do that, either.
+    4) If you do '   import foo.bar' several times in several
        functions (several "late imports") you'll get one
        return-value per late-import that you do.
     """
-    localnames = set()
-    for imp in _compute_all_imports(file_info, within_node=within_node,
-                                    toplevel_only=toplevel_only):
-        if imp.alias == imp.name:      # no aliases: no 'as' or 'from'
-            # This deals with the python quirk in case (1) of the
-            # docstring: 'import foo.anything' gives you access
-            # to foo.bar.myfunc.
-            imported_firstpart = imp.name.split('.', 1)[0]
-            fullname_firstpart = fullname.split('.', 1)[0]
-            if imported_firstpart == fullname_firstpart:
-                localnames.add(LocalName(fullname, fullname, imp))
-        else:                          # alias: need to replace name with alias
-            if _dotted_starts_with(fullname, imp.name):
-                localname = '%s%s' % (imp.alias, fullname[len(imp.name):])
-                localnames.add(LocalName(fullname, localname, imp))
-
-    # If the name is a specific symbol defined in the file on which we are
-    # operating, we also treat the unqualified reference as a localname, with
-    # null import.
+    if imports is None:
+        imports = _compute_all_imports(file_info)
     current_module_name = util.module_name_for_filename(file_info.filename)
-    if (_dotted_starts_with(fullname, current_module_name)
-            and fullname != current_module_name):
-        # Note that in this case localnames is likely empty if we get here,
-        # although it's not guaranteed since python lets you do `import
-        # foo.bar` in foo/bar.py, at least in some cases.
-        unqualified_name = fullname[len(current_module_name) + 1:]
-        localnames.add(LocalName(fullname, unqualified_name, None))
 
-    return localnames
+    imports_by_name = {}
+    unaliased_imports_by_name_prefix = {}
+    for imp in imports:
+        name_prefix = imp.name.split('.', 1)[0]
+        imports_by_name.setdefault(imp.name, []).append(imp)
+        if imp.name == imp.alias:
+            unaliased_imports_by_name_prefix.setdefault(
+                name_prefix, []).append(imp)
+
+    for fullname in fullnames:
+        found_explicit_unaliased_import = False
+        for fullname_prefix in _dotted_prefixes(fullname):
+            if fullname_prefix in imports_by_name:
+                for imp in imports_by_name[fullname_prefix]:
+                    yield LocalName(fullname,
+                                    imp.alias + fullname[len(imp.name):], imp)
+                    if imp.alias != imp.name:
+                        found_explicit_unaliased_import = True
+
+        if not found_explicit_unaliased_import:
+            # This deals with the case where you did 'import foo.bar' and then
+            # used 'foo.baz'.  In this case there can't be a "from"/"as".
+            implicit_imports = unaliased_imports_by_name_prefix.get(
+                fullname.split('.', 1)[0], [])
+            for imp in implicit_imports:
+                yield LocalName(fullname, fullname, imp)
+
+        # If the name is a specific symbol defined in the file on which we are
+        # operating, we also treat the unqualified reference as a localname,
+        # with null import.
+        if (_dotted_starts_with(fullname, current_module_name)
+                and fullname != current_module_name):
+            # Note that in this case localnames is likely empty if we get here,
+            # although it's not guaranteed since python lets you do `import
+            # foo.bar` in foo/bar.py, at least in some cases.
+            unqualified_name = fullname[len(current_module_name) + 1:]
+            yield LocalName(fullname, unqualified_name, None)
+
+
+def _localnames_from_localnames(file_info, localnames, imports=None):
+    """Return LocalNames by which the localnames may go in this file.
+
+    That is, given some string-localnames, like 'bar', return some
+    LocalName tuples, like `LocalName('foo.bar', 'bar', <Import object>)`
+    corresponding to them.  (So for each input localname the corresponding
+    output tuple(s) will have that localname as tuple.localname.)
+
+    If passed, we use the imports from 'imports', which should be a set
+    of imports; otherwise we use all the imports from the file_info.
+
+    Returns an iterable of LocalName namedtuples.
+
+    See also _localnames_from_fullnames, which returns more or less
+    the same data, but starts from fullnames instead of localnames.
+
+    If the unqualified name of a symbol defined in this file
+    appears in localnames, the corresponding LocalName will be
+    LocalName(fullname, unqualified_name, None).
+
+    Note that 'import foo.baz' also makes 'foo.bar.myfunc' available
+    (a quirk of python) so if we see that we include it.  If you
+    also did 'import foo.bar', we don't bother -- we only include
+    the "best" name when we can.  (We make this choice per-localname,
+    so if you did 'import foo.baz' and 'from foo import bar', and
+    localnames is {'foo.bar.myfunc', 'bar.myfunc'}, we'll return
+    the quirky LocalName for 'foo.bar.myfunc' as well as the more
+    normal one for 'bar.myfunc'.
+
+    If a localname is not made available by any import in this file,
+    we won't return any corresponding LocalNames -- perhaps it's
+    actually a local variable.  It might seem like this set
+    should always have at most one LocalName for each localname,
+    but there are several cases it might have more:
+    1) In the "quirk of python" case mentioned above, if there
+       are multiple such imports.
+    2) If you do '   import foo.bar' several times in several
+       functions (several "late imports") you'll get one
+       return-value per late-import that you do.
+    3) If the localname is defined in this file, and the file also
+       imports itself, you'll get one LocalName from the import
+       and one for the unqualified name.  I hope you don't
+       do that, either.
+    """
+    # TODO(benkraft): Share code with _localnames_from_fullnames, they do
+    # similar things.
+    if imports is None:
+        imports = _compute_all_imports(file_info)
+    current_module_name = util.module_name_for_filename(file_info.filename)
+    toplevel_names = util.toplevel_names(file_info)
+
+    imports_by_alias = {}
+    imports_by_alias_prefix = {}
+    for imp in imports:
+        alias_prefix = imp.alias.split('.', 1)[0]
+        imports_by_alias.setdefault(imp.alias, []).append(imp)
+        imports_by_alias_prefix.setdefault(alias_prefix, []).append(imp)
+
+    for localname in localnames:
+        found_explicit_import = False
+        for localname_prefix in _dotted_prefixes(localname):
+            if localname_prefix in imports_by_alias:
+                for imp in imports_by_alias[localname_prefix]:
+                    yield LocalName(imp.name + localname[len(imp.alias):],
+                                    localname, imp)
+                found_explicit_import = True
+
+        if not found_explicit_import:
+            # This deals with the case where you did 'import foo.bar' and then
+            # used 'foo.baz'.  In this case there can't be a "from"/"as".
+            implicit_imports = imports_by_alias_prefix.get(
+                localname.split('.', 1)[0], [])
+            for imp in implicit_imports:
+                yield LocalName(localname, localname, imp)
+
+        # If the name is a specific symbol defined in the file on which we are
+        # operating, we also treat the unqualified reference as a localname,
+        # with null import.
+        if localname in toplevel_names:
+            yield LocalName('%s.%s' % (current_module_name, localname),
+                            localname, None)
 
 
 def _name_for_node(node):
@@ -374,7 +489,7 @@ def _choose_best_localname(file_info, fullname, name_to_import, import_alias):
     # {'baz.myfunc'}.
     existing_new_localnames = {
         ln.localname
-        for ln in _determine_localnames(fullname, file_info)
+        for ln in _localnames_from_fullnames(file_info, {fullname})
         if ln.imp is None or name_to_import == ln.imp.name
     }
 
@@ -721,7 +836,7 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
             "%s isn't a valid name to import -- not a prefix of %s" % (
                 name_to_import, new_fullname))
 
-        old_localnames = _determine_localnames(old_fullname, file_info)
+        old_localnames = _localnames_from_fullnames(file_info, {old_fullname})
         old_localname_strings = {ln.localname for ln in old_localnames}
 
         new_localname, need_new_import = _choose_best_localname(
@@ -755,7 +870,7 @@ def _fix_imports_suggestor(old_fullname, new_fullname,
         # First, set things up, and do some checks.
         # TODO(benkraft): Don't recompute these; _fix_uses_suggestor has
         # already done so.
-        old_localnames = _determine_localnames(old_fullname, file_info)
+        old_localnames = _localnames_from_fullnames(file_info, {old_fullname})
         old_imports = {ln.imp for ln in old_localnames if ln.imp is not None}
         try:
             new_localname, need_new_import = _choose_best_localname(
@@ -922,11 +1037,11 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
         for old_fullname_to_fix, new_fullname_to_fix in names_to_fix:
             # PART THE FIRST:
             #    Do setup specific to each name to fix up.
-            old_localnames = (
-                _determine_localnames(old_fullname_to_fix, old_file_info,
-                                      toplevel_only=True) |
-                _determine_localnames(old_fullname_to_fix, file_info,
-                                      within_node=node_to_fix))
+            old_imports = (
+                _compute_all_imports(old_file_info, toplevel_only=True) |
+                _compute_all_imports(file_info, within_node=node_to_fix))
+            old_localnames = _localnames_from_fullnames(
+                old_file_info, {old_fullname_to_fix}, imports=old_imports)
             old_localname_strings = {ln.localname for ln in old_localnames}
 
             name_to_import, _ = new_fullname_to_fix.rsplit('.', 1)

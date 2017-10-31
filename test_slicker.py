@@ -52,7 +52,7 @@ class TestBase(unittest.TestCase):
         self.assertFalse(os.path.exists(self.join(filename)))
 
 
-class DetermineLocalnamesTest(unittest.TestCase):
+class LocalNamesFromFullNamesTest(unittest.TestCase):
     def _assert_localnames(self, actual, expected):
         """Assert imports match the given tuples, but with certain changes."""
         modified_actual = set()
@@ -72,192 +72,192 @@ class DetermineLocalnamesTest(unittest.TestCase):
     # TODO(benkraft): Move some of this to a separate ComputeAllImportsTest.
     def test_simple(self):
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo', util.File('some_file.py', 'import foo\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import foo\n'),
+                {'foo'}),
             {('foo', 'foo', ('foo', 'foo', 0, 10))})
 
     def test_with_dots(self):
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'import foo.bar.baz\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import foo.bar.baz\n'),
+                {'foo.bar.baz'}),
             {('foo.bar.baz', 'foo.bar.baz',
               ('foo.bar.baz', 'foo.bar.baz', 0, 18))})
 
     def test_from_import(self):
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'from foo.bar import baz\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'from foo.bar import baz\n'),
+                {'foo.bar.baz'}),
             {('foo.bar.baz', 'baz', ('foo.bar.baz', 'baz', 0, 23))})
 
     def test_implicit_import(self):
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz', util.File('some_file.py', 'import foo\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import foo\n'),
+                {'foo.bar.baz'}),
             {('foo.bar.baz', 'foo.bar.baz', ('foo', 'foo', 0, 10))})
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'import foo.quux\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import foo.quux\n'),
+                {'foo.bar.baz'}),
             {('foo.bar.baz', 'foo.bar.baz', ('foo.quux', 'foo.quux', 0, 15))})
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'import foo.bar\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import foo.bar\n'),
+                {'foo.bar.baz'}),
             {('foo.bar.baz', 'foo.bar.baz', ('foo.bar', 'foo.bar', 0, 14))})
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'import foo.bar.quux\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import foo.bar.quux\n'),
+                {'foo.bar.baz'}),
             {('foo.bar.baz', 'foo.bar.baz',
               ('foo.bar.quux', 'foo.bar.quux', 0, 19))})
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'import foo.bar.baz.quux\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import foo.bar.baz.quux\n'),
+                {'foo.bar.baz'}),
             {('foo.bar.baz', 'foo.bar.baz',
               ('foo.bar.baz.quux', 'foo.bar.baz.quux', 0, 23))})
 
     def test_implicit_from_import(self):
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'from foo.bar import quux\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'from foo.bar import quux\n'),
+                {'foo.bar.baz'}),
             set())
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'from foo import bar\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'from foo import bar\n'),
+                {'foo.bar.baz'}),
             {('foo.bar.baz', 'bar.baz', ('foo.bar', 'bar', 0, 19))})
 
     def test_as_import(self):
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo', util.File('some_file.py', 'import foo as bar\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import foo as bar\n'),
+                {'foo'}),
             {('foo', 'bar', ('foo', 'bar', 0, 17))})
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'import foo.bar.baz as quux\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import foo.bar.baz as quux\n'),
+                {'foo.bar.baz'}),
             {('foo.bar.baz', 'quux', ('foo.bar.baz', 'quux', 0, 26))})
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py',
-                          'from foo.bar import baz as quux\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'from foo.bar import baz as quux\n'),
+                {'foo.bar.baz'}),
             {('foo.bar.baz', 'quux', ('foo.bar.baz', 'quux', 0, 31))})
 
     def test_implicit_as_import(self):
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'import foo as quux\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import foo as quux\n'),
+                {'foo.bar.baz'}),
             {('foo.bar.baz', 'quux.bar.baz', ('foo', 'quux', 0, 18))})
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'import foo.bar as quux\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import foo.bar as quux\n'),
+                {'foo.bar.baz'}),
             {('foo.bar.baz', 'quux.baz', ('foo.bar', 'quux', 0, 22))})
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py',
-                          'import foo.bar.quux as bogus\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import foo.bar.quux as bogus\n'),
+                {'foo.bar.baz'}),
             set())
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'from foo import bar as quux\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'from foo import bar as quux\n'),
+                {'foo.bar.baz'}),
             {('foo.bar.baz', 'quux.baz', ('foo.bar', 'quux', 0, 27))})
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
+            slicker._localnames_from_fullnames(
                 util.File('some_file.py',
-                          'from foo.bar import quux as bogus\n')),
+                          'from foo.bar import quux as bogus\n'),
+                {'foo.bar.baz'}),
             set())
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
+            slicker._localnames_from_fullnames(
                 util.File('some_file.py',
-                          'import foo.bar.baz.quux as bogus\n')),
+                          'import foo.bar.baz.quux as bogus\n'),
+                {'foo.bar.baz'}),
             set())
 
     def test_other_imports(self):
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo', util.File('some_file.py', 'import bogus\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import bogus\n'),
+                {'foo'}),
             set())
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'import bogus.foo.bar.baz\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import bogus.foo.bar.baz\n'),
+                {'foo.bar.baz'}),
             set())
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo',
-                util.File('some_file.py', 'from bogus import foo\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'from bogus import foo\n'),
+                {'foo'}),
             set())
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'from bogus import foo\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'from bogus import foo\n'),
+                {'foo.bar.baz'}),
             set())
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'from bogus import foo, bar\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'from bogus import foo, bar\n'),
+                {'foo.bar.baz'}),
             set())
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'from foo.bogus import bar, baz\n'),
+                {'foo.bar.baz'}),
+            set())
+        self._assert_localnames(
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import bar, baz\n'),
+                {'foo.bar.baz'}),
+            set())
+        self._assert_localnames(
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'import bar as foo, baz as quux\n'),
+                {'foo.bar.baz'}),
+            set())
+        self._assert_localnames(
+            slicker._localnames_from_fullnames(
                 util.File('some_file.py',
-                          'from foo.bogus import bar, baz\n')),
-            set())
-        self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py', 'import bar, baz\n')),
-            set())
-        self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
-                util.File('some_file.py',
-                          'import bar as foo, baz as quux\n')),
-            set())
-        self._assert_localnames(
-            slicker._determine_localnames(
-                'foo',
-                util.File('some_file.py',
-                          'import bogus  # (with a comment)\n')),
+                          'import bogus  # (with a comment)\n'),
+                {'foo'}),
             set())
 
     def test_other_junk(self):
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo', util.File('some_file.py', '# import foo\n')),
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', '# import foo\n'),
+                {'foo'}),
             set())
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo',
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', '                  # import foo\n'),
+                {'foo'}),
+            set())
+        self._assert_localnames(
+            slicker._localnames_from_fullnames(
+                util.File('some_file.py', 'def foo(): pass\n'),
+                {'foo'}),
+            set())
+        self._assert_localnames(
+            slicker._localnames_from_fullnames(
                 util.File('some_file.py',
-                          '                  # import foo\n')),
-            set())
-        self._assert_localnames(
-            slicker._determine_localnames(
-                'foo', util.File('some_file.py', 'def foo(): pass\n')),
-            set())
-        self._assert_localnames(
-            slicker._determine_localnames(
-                'foo',
-                util.File('some_file.py',
-                          '"""imports are "fun" in a multiline string"""')),
+                          '"""imports are "fun" in a multiline string"""'),
+                {'foo'}),
             set())
 
     def test_with_context(self):
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo',
+            slicker._localnames_from_fullnames(
                 util.File(
                     'some_file.py',
                     ('# import foo as bar\n'
@@ -268,52 +268,56 @@ class DetermineLocalnamesTest(unittest.TestCase):
                      'import foo\n'
                      '\n'
                      'def foo():\n'
-                     '    return 1\n'))),
+                     '    return 1\n')),
+                {'foo'}),
             {('foo', 'foo', ('foo', 'foo', 55, 65))})
 
     def test_multiple_imports(self):
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.baz',
+            slicker._localnames_from_fullnames(
                 util.File(
                     'some_file.py',
                     ('import foo\n'
                      'import foo.bar.baz\n'
                      'from foo.bar import baz\n'
-                     'import foo.quux\n'))),
+                     # NOTE(benkraft): Since we found a more explicit import,
+                     # we don't include this one in the output.
+                     'import foo.quux\n')),
+                {'foo.bar.baz'}),
             {('foo.bar.baz', 'foo.bar.baz', ('foo', 'foo', 0, 10)),
              ('foo.bar.baz', 'foo.bar.baz',
               ('foo.bar.baz', 'foo.bar.baz', 11, 29)),
-             ('foo.bar.baz', 'baz', ('foo.bar.baz', 'baz', 30, 53)),
-             ('foo.bar.baz', 'foo.bar.baz', ('foo.quux', 'foo.quux', 54, 69))})
+             ('foo.bar.baz', 'baz', ('foo.bar.baz', 'baz', 30, 53))})
 
     def test_defined_in_this_file(self):
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo.bar.some_function',
+            slicker._localnames_from_fullnames(
                 util.File(
                     'foo/bar.py',
                     'import baz\n'
                     'def f():\n'
-                    '    some_function(baz.quux)\n')),
+                    '    some_function(baz.quux)\n'),
+                {'foo.bar.some_function'}),
             {('foo.bar.some_function', 'some_function', None)})
 
     def test_late_import(self):
+        file_info = util.File('some_file.py',
+                              ('def f():\n'
+                               '    import foo\n'))
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo', util.File(
-                    'some_file.py',
-                    ('def f():\n'
-                     '    import foo\n'))),
+            slicker._localnames_from_fullnames(file_info, {'foo'}),
             {('foo', 'foo', ('foo', 'foo', 13, 23))})
 
         self._assert_localnames(
-            slicker._determine_localnames(
-                'foo', util.File(
-                    'some_file.py',
-                    ('def f():\n'
-                     '    import foo\n')),
-                toplevel_only=True),
+            slicker._localnames_from_fullnames(
+                file_info, {'foo'}, imports=slicker._compute_all_imports(
+                    file_info)),
+            {('foo', 'foo', ('foo', 'foo', 13, 23))})
+
+        self._assert_localnames(
+            slicker._localnames_from_fullnames(
+                file_info, {'foo'}, imports=slicker._compute_all_imports(
+                    file_info, toplevel_only=True)),
             set())
 
     def test_within_node(self):
@@ -325,12 +329,303 @@ class DetermineLocalnamesTest(unittest.TestCase):
         def_node = file_info.tree.body[1]
 
         self._assert_localnames(
-            slicker._determine_localnames('foo', file_info),
+            slicker._localnames_from_fullnames(file_info, {'foo'}),
             {('foo', 'foo', ('foo', 'foo', 0, 10)),
              ('foo', 'bar', ('foo', 'bar', 26, 43))})
         self._assert_localnames(
-            slicker._determine_localnames('foo', file_info,
-                                          within_node=def_node),
+            slicker._localnames_from_fullnames(
+                file_info, {'foo'}, imports=slicker._compute_all_imports(
+                    file_info)
+            ),
+            {('foo', 'foo', ('foo', 'foo', 0, 10)),
+             ('foo', 'bar', ('foo', 'bar', 26, 43))})
+        self._assert_localnames(
+            slicker._localnames_from_fullnames(
+                file_info, {'foo'}, imports=slicker._compute_all_imports(
+                    file_info, within_node=def_node)),
+            {('foo', 'bar', ('foo', 'bar', 26, 43))})
+
+
+class LocalNamesFromLocalNamesTest(unittest.TestCase):
+    def _assert_localnames(self, actual, expected):
+        """Assert imports match the given tuples, but with certain changes."""
+        modified_actual = set()
+        for localname in actual:
+            self.assertIsInstance(localname, slicker.LocalName)
+            fullname, ln, imp = localname
+            if imp is None:
+                modified_actual.add((fullname, ln, None))
+            else:
+                self.assertIsInstance(imp, slicker.Import)
+                (name, alias, start, end, node) = imp
+                self.assertIsInstance(node, (ast.Import, ast.ImportFrom))
+                modified_actual.add(
+                    (fullname, ln, (name, alias, start, end)))
+        self.assertEqual(modified_actual, expected)
+
+    # TODO(benkraft): Move some of this to a separate ComputeAllImportsTest.
+    def test_simple(self):
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo\n'),
+                {'foo'}),
+            {('foo', 'foo', ('foo', 'foo', 0, 10))})
+
+    def test_with_dots(self):
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo.bar.baz\n'),
+                {'foo.bar.baz'}),
+            {('foo.bar.baz', 'foo.bar.baz',
+              ('foo.bar.baz', 'foo.bar.baz', 0, 18))})
+
+    def test_from_import(self):
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'from foo.bar import baz\n'),
+                {'baz'}),
+            {('foo.bar.baz', 'baz', ('foo.bar.baz', 'baz', 0, 23))})
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'from foo.bar import baz\n'),
+                {'foo.bar.baz'}),
+            set())
+
+    def test_implicit_import(self):
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo\n'),
+                {'foo.bar.baz'}),
+            {('foo.bar.baz', 'foo.bar.baz', ('foo', 'foo', 0, 10))})
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo.quux\n'),
+                {'foo.bar.baz'}),
+            {('foo.bar.baz', 'foo.bar.baz', ('foo.quux', 'foo.quux', 0, 15))})
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo.bar\n'),
+                {'foo.bar.baz'}),
+            {('foo.bar.baz', 'foo.bar.baz', ('foo.bar', 'foo.bar', 0, 14))})
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo.bar.quux\n'),
+                {'foo.bar.baz'}),
+            {('foo.bar.baz', 'foo.bar.baz',
+              ('foo.bar.quux', 'foo.bar.quux', 0, 19))})
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo.bar.baz.quux\n'),
+                {'foo.bar.baz'}),
+            {('foo.bar.baz', 'foo.bar.baz',
+              ('foo.bar.baz.quux', 'foo.bar.baz.quux', 0, 23))})
+
+    def test_implicit_from_import(self):
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'from foo.bar import quux\n'),
+                {'foo.bar.baz'}),
+            set())
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'from foo import bar\n'),
+                {'bar.baz'}),
+            {('foo.bar.baz', 'bar.baz', ('foo.bar', 'bar', 0, 19))})
+
+    def test_as_import(self):
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo as bar\n'),
+                {'bar'}),
+            {('foo', 'bar', ('foo', 'bar', 0, 17))})
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo.bar.baz as quux\n'),
+                {'quux'}),
+            {('foo.bar.baz', 'quux', ('foo.bar.baz', 'quux', 0, 26))})
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'from foo.bar import baz as quux\n'),
+                {'quux'}),
+            {('foo.bar.baz', 'quux', ('foo.bar.baz', 'quux', 0, 31))})
+
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo as bar\n'),
+                {'foo'}),
+            set())
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo.bar.baz as quux\n'),
+                {'foo.bar.baz'}),
+            set())
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'from foo.bar import baz as quux\n'),
+                {'foo.bar.baz'}),
+            set())
+
+    def test_implicit_as_import(self):
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo as quux\n'),
+                {'quux.bar.baz'}),
+            {('foo.bar.baz', 'quux.bar.baz', ('foo', 'quux', 0, 18))})
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo.bar as quux\n'),
+                {'quux.baz'}),
+            {('foo.bar.baz', 'quux.baz', ('foo.bar', 'quux', 0, 22))})
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo.bar.quux as bogus\n'),
+                {'foo.bar.baz'}),
+            set())
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'from foo import bar as quux\n'),
+                {'quux.baz'}),
+            {('foo.bar.baz', 'quux.baz', ('foo.bar', 'quux', 0, 27))})
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py',
+                          'from foo.bar import quux as bogus\n'),
+                {'foo.bar.baz'}),
+            set())
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py',
+                          'import foo.bar.baz.quux as bogus\n'),
+                {'foo.bar.baz'}),
+            set())
+
+    def test_other_imports(self):
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import bogus\n'),
+                {'foo'}),
+            set())
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo\n'),
+                {'bogus.foo'}),
+            set())
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'import foo.bar.baz\n'),
+                {'bogus.foo.bar.baz'}),
+            set())
+
+    def test_other_junk(self):
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', '# import foo\n'),
+                {'foo'}),
+            set())
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', '                  # import foo\n'),
+                {'foo'}),
+            set())
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py', 'def bogus(): pass\n'),
+                {'foo'}),
+            set())
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File('some_file.py',
+                          '"""imports are "fun" in a multiline string"""'),
+                {'foo'}),
+            set())
+
+    def test_with_context(self):
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File(
+                    'some_file.py',
+                    ('# import foo as bar\n'
+                     'import os\n'
+                     'import sys\n'
+                     '\n'
+                     'import bogus\n'
+                     'import foo\n'
+                     '\n'
+                     'def bogus():\n'
+                     '    return 1\n')),
+                {'foo'}),
+            {('foo', 'foo', ('foo', 'foo', 55, 65))})
+
+    def test_multiple_imports(self):
+        file_info = util.File(
+            'some_file.py',
+            ('import foo\n'
+             'import foo.bar.baz\n'
+             'from foo.bar import baz\n'
+             'import foo.quux\n'))
+        self._assert_localnames(
+            slicker._localnames_from_localnames(file_info, {'foo.bar.baz'}),
+            {('foo.bar.baz', 'foo.bar.baz', ('foo', 'foo', 0, 10)),
+             ('foo.bar.baz', 'foo.bar.baz',
+              ('foo.bar.baz', 'foo.bar.baz', 11, 29))})
+        self._assert_localnames(
+            slicker._localnames_from_localnames(file_info, {'baz'}),
+            {('foo.bar.baz', 'baz', ('foo.bar.baz', 'baz', 30, 53))})
+
+    def test_defined_in_this_file(self):
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                util.File(
+                    'foo/bar.py',
+                    'import baz\n'
+                    'def some_function():\n'
+                    '    return 1\n'),
+                {'some_function'}),
+            {('foo.bar.some_function', 'some_function', None)})
+
+    def test_late_import(self):
+        file_info = util.File('some_file.py',
+                              ('def f():\n'
+                               '    import foo\n'))
+        self._assert_localnames(
+            slicker._localnames_from_localnames(file_info, {'foo'}),
+            {('foo', 'foo', ('foo', 'foo', 13, 23))})
+
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                file_info, {'foo'}, imports=slicker._compute_all_imports(
+                    file_info)),
+            {('foo', 'foo', ('foo', 'foo', 13, 23))})
+
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                file_info, {'foo'}, imports=slicker._compute_all_imports(
+                    file_info, toplevel_only=True)),
+            set())
+
+    def test_within_node(self):
+        file_info = util.File(
+            'some_file.py',
+            ('import bar\n\n\n'
+             'def f():\n'
+             '    import foo as bar\n'))
+        def_node = file_info.tree.body[1]
+
+        self._assert_localnames(
+            slicker._localnames_from_localnames(file_info, {'bar'}),
+            {('bar', 'bar', ('bar', 'bar', 0, 10)),
+             ('foo', 'bar', ('foo', 'bar', 26, 43))})
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                file_info, {'bar'}, imports=slicker._compute_all_imports(
+                    file_info)
+            ),
+            {('bar', 'bar', ('bar', 'bar', 0, 10)),
+             ('foo', 'bar', ('foo', 'bar', 26, 43))})
+        self._assert_localnames(
+            slicker._localnames_from_localnames(
+                file_info, {'bar'}, imports=slicker._compute_all_imports(
+                    file_info, within_node=def_node)),
             {('foo', 'bar', ('foo', 'bar', 26, 43))})
 
 
