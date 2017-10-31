@@ -390,6 +390,50 @@ def _imports_to_remove(localnames_for_old_fullname, new_localname,
     return (removable_imports, maybe_removable_imports)
 
 
+def _choose_best_localname(file_info, fullname, name_to_import, import_alias):
+    """Decide what localname we should refer to fullname by in this file.
+
+    If there's already an import of fullname, we'll use it.  If not, we'll
+    choose the best import to add, based on name_to_import and import_alias.
+
+    Returns: (the localname we should use, whether we should add an import).
+
+    TODO(benkraft): Perhaps we should instead return the full text of the
+    import we should add, if applicable?
+    """
+    # If name_to_import is already imported in this file,
+    # figure out what the localname for our symbol would
+    # be using this existing import.  That is, if we are moving
+    # 'foo.myfunc' to 'bar.myfunc' and this file already has
+    # 'import bar as baz' then existing_new_localnames would be
+    # {'baz.myfunc'}.
+    existing_new_localnames = {
+        ln.localname
+        for ln in _determine_localnames(fullname, file_info)
+        if ln.imp is None or name_to_import == ln.imp.name
+    }
+
+    if not existing_new_localnames:
+        conflicting_imports = _check_import_conflicts(
+            file_info, import_alias or name_to_import, bool(import_alias))
+        if conflicting_imports:
+            raise khodemod.FatalError(
+                file_info.filename, conflicting_imports.pop().start,
+                "Your alias will conflict with imports in this file.")
+
+    if existing_new_localnames:
+        # If for some reason there are multiple existing localnames
+        # (unlikely), choose the shortest one, to save us line-wrapping.
+        # Prefer an existing explicit import to the caller-provided alias.
+        # TODO(benkraft): this might not be totally safe if the existing
+        # import isn't toplevel, but probably it will be.
+        return min(existing_new_localnames, key=len), False
+    elif import_alias:
+        return import_alias + fullname[len(name_to_import):], True
+    else:
+        return fullname, True
+
+
 def _replace_in_string(str_tokens, regex, replacement, file_info):
     """Given a list of tokens representing a string, do a regex-replace.
 
@@ -573,6 +617,26 @@ def _replace_in_file(file_info, old_fullname, old_localnames,
     return patches, used_localnames
 
 
+def _new_import_stmt(name, alias=None):
+    """Given a name and alias, decide the best import text.
+
+    Returns an import statement, like 'from foo import bar'.
+    """
+    # TODO(csilvers): properly handle the case that
+    # name is "module.symbol" and alias is not None.
+    if '.' in name and alias:
+        base, suffix = name.rsplit('.', 1)
+        if alias == suffix:
+            return 'from %s import %s' % (base, suffix)
+        else:
+            return 'import %s as %s' % (name, alias)
+    else:
+        if alias and alias != name:
+            return 'import %s as %s' % (name, alias)
+        else:
+            return 'import %s' % name
+
+
 def _add_contextless_import_patch(file_info, import_texts):
     """Add imports to the file_info, in a reasonable place.
 
@@ -587,7 +651,7 @@ def _add_contextless_import_patch(file_info, import_texts):
 
     Returns a patch.
     """
-    joined_imports = ''.join('%s\n' % text for text in import_texts)
+    joined_imports = ''.join(import_texts)
     last_toplevel_import = None
     for stmt in file_info.tree.body:
         if isinstance(stmt, (ast.Import, ast.ImportFrom)):
@@ -621,6 +685,38 @@ def _add_contextless_import_patch(file_info, import_texts):
             '%s\n\n' % joined_imports)
 
         return khodemod.Patch(file_info.filename, '', text_to_add, pos, pos)
+
+
+def _remove_import_patch(imp, file_info):
+    """Remove the given import from the given file.
+
+    Returns a khodemod.Patch, or a khodemod.WarningInfo if we can't/won't
+    remove the import.
+    """
+    toks = list(file_info.tokens.get_tokens(imp.node, include_extra=False))
+    next_tok = file_info.tokens.next_token(toks[-1], include_extra=True)
+    if next_tok.type == tokenize.COMMENT and (
+            '@nolint' in next_tok.string.lower() or
+            '@unusedimport' in next_tok.string.lower()):
+        # Don't touch nolinted imports; they may be there for a reason.
+        # TODO(benkraft): Handle this case for implicit imports as well
+        return khodemod.WarningInfo(
+            file_info.filename, imp.start,
+            "Not removing import with @Nolint.")
+    elif ',' in file_info.body[imp.start:imp.end]:
+        # TODO(benkraft): better would be to check for `,` in each
+        # token so we don't match commas in internal comments.
+        # TODO(benkraft): learn to handle this case.
+        return khodemod.WarningInfo(
+            file_info.filename, imp.start,
+            "I don't know how to edit this import.")
+    else:
+        # TODO(benkraft): Should we look at preceding comments?
+        # We end up fighting with fix_python_imports if we do.
+        start, end = util.get_area_for_ast_node(
+            imp.node, file_info, include_previous_comments=False)
+        return khodemod.Patch(file_info.filename,
+                              file_info.body[start:end], '', start, end)
 
 
 # TODO(benkraft): Once slicker can do it relatively easily, move the
@@ -663,37 +759,8 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
         old_localnames = _determine_localnames(old_fullname, file_info)
         old_localname_strings = {ln.localname for ln in old_localnames}
 
-        # If name_to_import is already imported in this file,
-        # figure out what the localname for our symbol would
-        # be using this existing import.  That is, if we are moving
-        # 'foo.myfunc' to 'bar.myfunc' and this file already has
-        # 'import bar as baz' then existing_new_localnames would be
-        # {'baz.myfunc'}.
-        existing_new_localnames = {
-            ln.localname
-            for ln in _determine_localnames(new_fullname, file_info)
-            if ln.imp is None or name_to_import == ln.imp.name
-        }
-
-        if existing_new_localnames:
-            # If for some reason there are multiple existing localnames
-            # (unlikely), choose the shortest one, to save us line-wrapping.
-            # Prefer an existing explicit import to the caller-provided alias.
-            # TODO(benkraft): this might not be totally safe if the existing
-            # import isn't toplevel, but probably it will be.
-            new_localname = min(existing_new_localnames, key=len)
-        elif import_alias:
-            new_localname = import_alias + new_fullname[len(name_to_import):]
-        else:
-            new_localname = new_fullname
-
-        if not existing_new_localnames:
-            conflicting_imports = _check_import_conflicts(
-                file_info, import_alias or name_to_import, bool(import_alias))
-            if conflicting_imports:
-                raise khodemod.FatalError(
-                    filename, conflicting_imports.pop().start,
-                    "Your alias will conflict with imports in this file.")
+        new_localname, need_new_import = _choose_best_localname(
+            file_info, new_fullname, name_to_import, import_alias)
 
         # PART THE SECOND:
         #    Patch references to the symbol inline -- everything but imports.
@@ -717,48 +784,12 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
             yield khodemod.WarningInfo(
                 filename, imp.start, "This import may be used implicitly.")
         for imp in removable_imports:
-            toks = list(
-                file_info.tokens.get_tokens(imp.node, include_extra=False))
-            next_tok = file_info.tokens.next_token(
-                toks[-1], include_extra=True)
-            if next_tok.type == tokenize.COMMENT and (
-                    '@nolint' in next_tok.string.lower() or
-                    '@unusedimport' in next_tok.string.lower()):
-                # Don't touch nolinted imports; they may be there for a reason.
-                # TODO(benkraft): Handle this case for implicit imports as well
-                yield khodemod.WarningInfo(
-                    filename, imp.start, "Not removing import with @Nolint.")
-            elif ',' in body[imp.start:imp.end]:
-                # TODO(benkraft): better would be to check for `,` in each
-                # token so we don't match commas in internal comments.
-                yield khodemod.WarningInfo(
-                    filename, imp.start,
-                    "I don't know how to edit this import.")
-            else:
-                # TODO(benkraft): Should we look at preceding comments?
-                # We end up fighting with fix_python_imports if we do.
-                start, end = util.get_area_for_ast_node(
-                    imp.node, file_info, include_previous_comments=False)
-                yield khodemod.Patch(filename, body[start:end], '', start, end)
+            yield _remove_import_patch(imp, file_info)
 
         # Add a new import, if necessary.
-        if not existing_new_localnames:
+        if need_new_import:
             # Decide what the import will say.
-            # TODO(csilvers): properly handle the case that
-            # name_to_import is "module.symbol" and import_alias is not None.
-            if '.' in name_to_import and import_alias:
-                base, suffix = name_to_import.rsplit('.', 1)
-                if import_alias == suffix:
-                    import_stmt = 'from %s import %s' % (base, suffix)
-                else:
-                    import_stmt = 'import %s as %s' % (
-                        name_to_import, import_alias)
-            else:
-                if import_alias and import_alias != name_to_import:
-                    import_stmt = 'import %s as %s' % (
-                        name_to_import, import_alias)
-                else:
-                    import_stmt = 'import %s' % name_to_import
+            import_stmt = _new_import_stmt(name_to_import, import_alias)
 
             old_imports = {
                 ln.imp for ln in old_localnames if ln.imp is not None}
@@ -778,7 +809,8 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
                 # We need to add a totally new toplevel import, not
                 # corresponding to an existing one.  (So we also don't
                 # need to worry about copying comments or indenting.)
-                yield _add_contextless_import_patch(file_info, [import_stmt])
+                yield _add_contextless_import_patch(
+                    file_info, ['%s\n' % import_stmt])
             else:
                 # There were existing imports of the old name,
                 # so we try to match those.
@@ -887,8 +919,6 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
         for old_fullname_to_fix, new_fullname_to_fix in names_to_fix:
             # PART THE FIRST:
             #    Do setup specific to each name to fix up.
-            name_to_import, _ = new_fullname_to_fix.rsplit('.', 1)
-
             old_localnames = (
                 _determine_localnames(old_fullname_to_fix, old_file_info,
                                       toplevel_only=True) |
@@ -896,41 +926,12 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
                                       within_node=node_to_fix))
             old_localname_strings = {ln.localname for ln in old_localnames}
 
-            # If name_to_import is already imported in this file, figure out
-            # what the localname for new_fullname_to_fix would be using this
-            # existing import.  That is, if we are fixing references to some
-            # function 'foo.helper' called in the moved region, and bar.py
-            # already has 'import foo as baz', then existing_new_localnames
-            # would be {'baz.helper'}.
-            existing_new_localnames = {
-                ln.localname
-                for ln in _determine_localnames(new_fullname_to_fix, file_info)
-                if ln.imp is None or name_to_import == ln.imp.name
-            }
-
-            if existing_new_localnames:
-                # If for some reason there are multiple existing localnames
-                # (unlikely), choose the shortest one, to save us
-                # line-wrapping.  Prefer an existing explicit import to the
-                # caller-provided alias.
-                # TODO(benkraft): this might not be totally safe if the
-                # existing import isn't toplevel, but probably it will be.
-                new_localname = min(existing_new_localnames, key=len)
-            else:
+            name_to_import, _ = new_fullname_to_fix.rsplit('.', 1)
+            new_localname, need_new_import = _choose_best_localname(
                 # TODO(benkraft): Allow specifying an alias for the old module
                 # in the new file.
-                new_localname = new_fullname_to_fix
-
-            if not existing_new_localnames:
-                # TODO(benkraft): Maybe do this check for every name before
-                # fixing up any of them?  (And only do it once for each
-                # distinct name_to_import.)
-                conflicting_imports = _check_import_conflicts(
-                    file_info, name_to_import, False)
-                if conflicting_imports:
-                    raise khodemod.FatalError(
-                        filename, conflicting_imports.pop().start,
-                        "Your alias will conflict with imports in this file.")
+                file_info, new_fullname_to_fix, name_to_import,
+                import_alias=None)
 
             # PART THE SECOND:
             #    Patch references to the symbol inline -- everything but
@@ -941,8 +942,9 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
             for patch in patches:
                 yield patch
 
-            if used_localnames and not existing_new_localnames:
-                imports_to_add.add(name_to_import)
+            if used_localnames and need_new_import:
+                imports_to_add.add('%s\n' % _new_import_stmt(name_to_import,
+                                                             alias=None))
 
         # PART THE THIRD:
         #    Fix up imports
@@ -951,8 +953,7 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
         #    additions and removals.  (If we've removed the remainder of the
         #    old file, _remove_empty_files_suggestor will clean up.)
         if imports_to_add:
-            yield _add_contextless_import_patch(
-                file_info, ['import %s' % imp for imp in imports_to_add])
+            yield _add_contextless_import_patch(file_info, imports_to_add)
 
         # TODO(benkraft): Remove imports from the old file, if applicable.
 
