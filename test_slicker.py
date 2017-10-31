@@ -834,7 +834,7 @@ class FixUsesTest(TestBase):
             'foo.bar.baz.some_function', 'quux.new_name',
             expected_warnings=[
                 'WARNING:This import may be used implicitly.\n'
-                '    on implicit_in.py:2 --> import foo.bar.baz'])
+                '    on implicit_in.py:3 --> import foo.bar.baz'])
 
     def test_double_implicit(self):
         self.create_module('foo.bar.baz')
@@ -892,7 +892,7 @@ class FixUsesTest(TestBase):
             'foo.bar.some_function', 'quux.some_function',
             expected_warnings=[
                 'WARNING:Not removing import with @Nolint.\n'
-                '    on unused_in.py:3 --> import foo.baz  # @UnusedImport'])
+                '    on unused_in.py:4 --> import foo.baz  # @UnusedImport'])
 
     def test_many_imports(self):
         self.create_module('foo.quux')
@@ -1185,7 +1185,9 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'import foo.baz\n\n\n'
                            'def myfunc():\n'
                            '    return foo.bar.f()\n'))
-        self.assertFalse(self.error_output)
+        self.assertEqual(self.error_output,
+                         ['WARNING:This import may be used implicitly.'
+                          '\n    on newfoo.py:3 --> import foo.baz'])
 
     def test_uses_new_module_via_implicit_import(self):
         self.write_file('foo.py',

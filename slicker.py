@@ -870,7 +870,8 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
                         name_to_import, import_alias=None):
     """The suggestor to fix all references to a file or symbol.
 
-    Note that this does not fix imports; see _fix_imports_suggestor.
+    Note that this adds new imports for any references we updated, but does not
+    remove the old ones; see _remove_imports_suggestor.
 
     Arguments:
         old_fullname: the pre-move fullname (module when moving a module,
@@ -901,7 +902,8 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
             "%s isn't a valid name to import -- not a prefix of %s" % (
                 name_to_import, new_fullname))
 
-        old_localnames = _localnames_from_fullnames(file_info, {old_fullname})
+        old_localnames = list(  # so we can re-use it
+            _localnames_from_fullnames(file_info, {old_fullname}))
         old_localname_strings = {ln.localname for ln in old_localnames}
 
         new_localname, need_new_import = _choose_best_localname(
@@ -914,67 +916,13 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
         for patch in patches:
             yield patch
 
-    return suggestor
-
-
-def _fix_imports_suggestor(old_fullname, new_fullname,
-                           name_to_import, import_alias=None):
-    """The suggestor to fix up imports for changed references.
-
-    Note that this should run after _fix_uses_suggestor.
-
-    Arguments: same as _fix_uses_suggestor.
-    """
-    def suggestor(filename, body):
-        try:
-            file_info = util.File(filename, body)
-        except Exception as e:
-            raise khodemod.FatalError(filename, 0,
-                                      "Couldn't parse this file: %s" % e)
-
-        # First, set things up, and do some checks.
-        # TODO(benkraft): Don't recompute these; _fix_uses_suggestor has
-        # already done so.
-        old_localnames = _localnames_from_fullnames(file_info, {old_fullname})
-        old_imports = {ln.imp for ln in old_localnames if ln.imp is not None}
-        try:
-            new_localname, need_new_import = _choose_best_localname(
-                file_info, new_fullname, name_to_import, import_alias)
-        except khodemod.FatalError:
-            # Since _fix_uses_suggestor has already made the same call, if it
-            # errors, we can just give up without reporting the error a second
-            # time.
-            # TODO(benkraft): Handle this sort of thing better, such as by not
-            # recomputing in the first place.
-            return
-
-        # We didn't reference the moved symbol; nothing to patch.
-        # (Removing unused imports should be a no-op in that case,
-        # we don't want to add a new import.)
-        if not _names_starting_with(new_localname, file_info.tree):
-            return
-
-        # Next, remove imports, if any are now unused.
-        unused_imports, implicitly_used_imports = _unused_imports(
-            old_imports, file_info)
-
-        for imp in implicitly_used_imports:
-            # If we were using this import implicitly for the new symbol only,
-            # we can just remove it; the added import will cover us.
-            imp_prefix = imp.alias.split('.', 1)[0]
-            if need_new_import and _dotted_starts_with(
-                    new_localname, imp_prefix):
-                yield _remove_import_patch(imp, file_info)
-            else:
-                yield khodemod.WarningInfo(
-                    filename, imp.start, "This import may be used implicitly.")
-        for imp in unused_imports:
-            yield _remove_import_patch(imp, file_info)
-
         # Finally, add a new import, if necessary.
-        if need_new_import:
+        if need_new_import and used_localnames:
             # Decide what the import will say.
             import_stmt = _new_import_stmt(name_to_import, import_alias)
+
+            old_imports = {ln.imp for ln in old_localnames
+                           if ln.imp is not None}
 
             # Decide where to add it.  The issue here is that we may
             # be replacing a "late import" (an import inside a
@@ -1025,6 +973,42 @@ def _fix_imports_suggestor(old_fullname, new_fullname,
     return suggestor
 
 
+def _remove_imports_suggestor(old_fullname):
+    """The suggestor to remove imports for now-changed references.
+
+    Note that this should run after _fix_uses_suggestor.
+
+    Arguments:
+        old_fullname: the pre-move fullname (module when moving a module,
+            module.symbol when moving a symbol) that we're moving.  (We
+            only remove imports that could have gotten us that symbol.)
+    """
+    def suggestor(filename, body):
+        try:
+            file_info = util.File(filename, body)
+        except Exception as e:
+            raise khodemod.FatalError(filename, 0,
+                                      "Couldn't parse this file: %s" % e)
+
+        # First, set things up, and do some checks.
+        # TODO(benkraft): Don't recompute these; _fix_uses_suggestor has
+        # already done so.
+        old_localnames = _localnames_from_fullnames(file_info, {old_fullname})
+        old_imports = {ln.imp for ln in old_localnames if ln.imp is not None}
+
+        # Next, remove imports, if any are now unused.
+        unused_imports, implicitly_used_imports = _unused_imports(
+            old_imports, file_info)
+
+        for imp in implicitly_used_imports:
+            yield khodemod.WarningInfo(
+                filename, imp.start, "This import may be used implicitly.")
+        for imp in unused_imports:
+            yield _remove_import_patch(imp, file_info)
+
+    return suggestor
+
+
 def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
     """Suggestor to fix up all the references to symbols in the moved region.
 
@@ -1032,8 +1016,8 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
     the source and/or destination modules as well as itself.  We need to fix up
     those references.  This works a lot like _fix_uses_suggestor, but we're
     actually sort of doing the reverse, since it's our code that's moving while
-    the things we refer to stay where they are.  We additionally add necessary
-    imports to the new file, although we leave it to
+    the things we refer to stay where they are.  Like _fix_uses_suggestor, we
+    additionally add necessary imports to the new file, although we leave it to
     _remove_moved_region_imports_suggestor to remove now-unused imports from
     the old file.
 
@@ -1432,13 +1416,8 @@ def make_fixes(old_fullnames, new_fullname, import_alias=None,
             oldname, newname, name_to_import, import_alias)
         frontend.run_suggestor(fix_uses_suggestor, root=project_root)
 
-        fix_imports_suggestor = _fix_imports_suggestor(
-            oldname, newname, name_to_import, import_alias)
-        # NOTE(benkraft): We need to run this even on unmodified files,
-        # because if we're moving 'foo.myfunc' to 'bar.myfunc' and some
-        # file had 'import foo as bar' we need to fix an import, but the
-        # in-file reference ('bar.myfunc') remains the same.
-        frontend.run_suggestor(fix_imports_suggestor, root=project_root)
+        remove_imports_suggestor = _remove_imports_suggestor(oldname)
+        frontend.run_suggestor_on_modified_files(remove_imports_suggestor)
 
     log("===== Cleaning up empty files & whitespace =====")
     frontend.run_suggestor_on_modified_files(_remove_empty_files_suggestor)
