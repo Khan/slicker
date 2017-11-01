@@ -5,8 +5,31 @@ although it's written from scratch.  The user-facing functionality will
 eventually be pretty similar, but khodemod is designed for use as a library --
 so each component is pluggable -- as well as for Khan Academy's use cases.
 
+TERMS:
+"suggestor": These are how one implements code-changes to be applied using
+    khodemod.  They're just functions (often curried -- that is, the actual
+    suggestor is the function returned by calling some_suggestor(...))
+    accepting a filename (string) and body (string, the text of that file) and
+    yielding a series of khodemod.Patch objects, representing the changes to be
+    made.  They may also yield khodemod.WarningInfo objects, which will be
+    displayed to the user as warnings, or raise khodemod.FatalError exceptions,
+    to refuse to process the given file.  Note that these changes will not be
+    applied until the suggestor completes operation.  For an example, see
+    regex_suggestor() below, which implements a simple find-and-replace.
+"frontend": These are responsible for applying the changes given by a
+    suggestor, perhaps displaying output to the user (or even prompting for
+    input) as they go.  Currently, only one is implemented,
+    khodemod.AcceptingFrontend, which simply applies the changes, perhaps
+    displaying a progress bar.
+    TODO(benkraft): Implement other frontends.
+"root": The directory in which we should operate, often the current working
+    directory.
+"path_filter": These are how one decides what code to operate on: one passes a
+    path filter, which is just a function which takes a filename relative to
+    "root" and returns True if we should operate on it.  These are useful for
+    ignoring generated files and the like.
+
 TODO(benkraft): Implement a commandline interface for the regex suggestors.
-TODO(benkraft): Implement other frontends.
 """
 from __future__ import absolute_import
 

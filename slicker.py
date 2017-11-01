@@ -18,7 +18,46 @@ can be moved are:
 * top-level classes
 * top-level constants and variables
 
-High level terminology:
+
+SPECIAL CASES IN PYTHON IMPORTS
+
+One of the reasons slicker is complex is that python imports can do
+a number of pathological things, if you're not careful.  Here are the
+ones we have to deal with the most:
+0) In addition to imports at the top of the file, there can be imports
+   inside functions.  These are often used to avoid circular imports, or
+   to avoid pulling in a module until it's certainly needed.  Often the
+   same file will have several such imports of the same module, in
+   different functions.  These aren't really a pathological case, just
+   one that requires special handling in some places.  We call them
+   "late imports".
+1) If you do `import foo.bar`, and some other file (perhaps another one
+   you import) does `import foo.baz`, then your `foo` now also has a
+   `foo.baz`, and so you can do `foo.baz.func()` with impunity, even
+   though no import in your file directly mentions that module.  (This
+   is because `foo` in both files refers to the same object -- a.k.a.
+   `sys.modules['foo']` -- and so when the other file does
+   `import foo.baz` it attaches `baz` to that shared object.)  We call
+   these "implicit imports", or say you accessed `foo.baz.func`
+   "implicitly". Note that if you do `from foo import bar` this problem
+   can't arise, as you don't have access to any `foo`.
+2) Similarly, if you do `import foo` and some other file does
+   `import foo.bar`, your foo now also has a `foo.bar`.  Slicker doesn't
+   handle this case as well, as it's hard to tell whether `bar` is a
+   symbol defined in `foo.py` (in which case this pattern is fine) or a
+   module `foo/bar.py` (in which case it's not great).
+3) Modules can import the same file in multiple ways.  For example, you
+   might do both `import foo.bar` and `from foo import bar`, in which
+   case `foo.bar.func` is available as both `foo.bar.func` and
+   `bar.func`.  Hopefully you don't do that.
+4) Modules can import themselves.  For example, `foo/bar.py` might do
+   'import foo.bar`, in which case a function `func` defined in it is
+   available as both `func` and `foo.bar.func`.  Hopefully you don't do
+   that either.
+
+TERMINOLOGY USED INTERNALLY
+
+0) "late import", "implicit import": see special cases (0) and (1) above.
 1) "fullname": the fully-qualified symbol or module being moved.  If you
    are moving class Importer from foo/bar.py to foo/baz.py, then
    the old "fullname" is foo.bar.Importer and the new "fullname" is
@@ -184,28 +223,22 @@ def _localnames_from_fullnames(file_info, fullnames, imports=None):
     you can reference the fullname in this file.
 
     Note that 'import foo.baz' also makes 'foo.bar.myfunc' available
-    (a quirk of python) so we have to include that as well -- we call
-    this an "implicit import".  If you also did 'import foo.bar', we
-    don't bother -- we only include the "best" name when we can --
-    but if you did 'from foo import bar' you you actually still have
-    access to 'foo.bar.myfunc' as both 'bar.myfunc' and 'foo.bar.myfunc'
-    so we return a LocalName for each.  (Hopefully the latter is unused.)
+    (see module docstring, "implicit imports"), so we have to include
+    that as well.  If you also did 'import foo.bar', we don't bother --
+    we only include the "best" name when we can -- but if you did
+    'from foo import bar' you you actually still have access to
+    'foo.bar.myfunc' as both 'bar.myfunc' and 'foo.bar.myfunc' so we
+    return a LocalName for each.  (Hopefully the latter is unused.)
 
     If a fullname is not made available by any import in this file,
     we won't return any corresponding LocalNames.  It might seem
     like this set should always have at most one LocalName for
     each fullname, but there are several cases it might have more:
-    1) In the "quirk of python" case mentioned above.
-    2) If you do 'import foo.bar' and 'from foo import bar',
-       then 'foo.bar.myfunc' is provided through both imports.
-       I hope you don't do that.
-    3) Similarly, if the fullname is defined in this file, and
-       the file also imports itself, you'll get one LocalName
-       from the import and one for the unqualified name.  I
-       hope you don't do that, either.
-    4) If you do '   import foo.bar' several times in several
-       functions (several "late imports") you'll get one
-       return-value per late-import that you do.
+    1) In the "implicit imports" case mentioned above.
+    2) If you import a module two ways or from itself (see special
+       cases (3) and (4) in the module docstring).
+    4) If you do several "late imports" (see module docstring),
+       you'll get one return-value per late-import that you do.
     """
     if imports is None:
         imports = _compute_all_imports(file_info)
@@ -232,7 +265,7 @@ def _localnames_from_fullnames(file_info, fullnames, imports=None):
 
         if not found_explicit_unaliased_import:
             # This deals with the case where you did 'import foo.bar' and then
-            # used 'foo.baz'.  In this case there can't be a "from"/"as".
+            # used 'foo.baz' -- an "implicit import".
             implicit_imports = unaliased_imports_by_name_prefix.get(
                 fullname.split('.', 1)[0], [])
             for imp in implicit_imports:
@@ -271,28 +304,34 @@ def _localnames_from_localnames(file_info, localnames, imports=None):
     LocalName(fullname, unqualified_name, None).
 
     Note that 'import foo.baz' also makes 'foo.bar.myfunc' available
-    (a quirk of python) so if we see that we include it.  If you
-    also did 'import foo.bar', we don't bother -- we only include
-    the "best" name when we can.  (We make this choice per-localname,
-    so if you did 'import foo.baz' and 'from foo import bar', and
-    localnames is {'foo.bar.myfunc', 'bar.myfunc'}, we'll return
-    the quirky LocalName for 'foo.bar.myfunc' as well as the more
-    normal one for 'bar.myfunc'.
+    (see module docstring, "implicit imports"), so so we have to include
+    that as well.  If you also did 'import foo.bar', we don't bother --
+    we only include the "best" name when we can.  (We make this choice
+    per-localname, so if you did 'import foo.baz' and
+    'from foo import bar', and localnames is {'foo.bar.myfunc',
+    'bar.myfunc'}, we'll return the quirky LocalName for
+    'foo.bar.myfunc' as well as the more normal one for 'bar.myfunc'.
+
+    If a fullname is not made available by any import in this file,
+    we won't return any corresponding LocalNames.  It might seem
+    like this set should always have at most one LocalName for
+    each fullname, but there are several cases it might have more:
+    1) In the "quirk of python" case mentioned above.
+    2) If you import a module two ways or from itself (see special
+       cases (3) and (4) in the module docstring).
+    4) If you do several "late imports" (see module docstring),
+       you'll get one return-value per late-import that you do.
 
     If a localname is not made available by any import in this file,
     we won't return any corresponding LocalNames -- perhaps it's
     actually a local variable.  It might seem like this set
     should always have at most one LocalName for each localname,
     but there are several cases it might have more:
-    1) In the "quirk of python" case mentioned above, if there
-       are multiple such imports.
-    2) If you do '   import foo.bar' several times in several
-       functions (several "late imports") you'll get one
-       return-value per late-import that you do.
+    1) If there are multiple "implicit imports" as mentioned above.
+    2) If you do several "late imports" (see module docstring),
+       you'll get one return-value per late-import that you do.
     3) If the localname is defined in this file, and the file also
-       imports itself, you'll get one LocalName from the import
-       and one for the unqualified name.  I hope you don't
-       do that, either.
+       imports itself (special case (4) in the module docstring).
     """
     # TODO(benkraft): Share code with _localnames_from_fullnames, they do
     # similar things.
@@ -319,7 +358,7 @@ def _localnames_from_localnames(file_info, localnames, imports=None):
 
         if not found_explicit_import:
             # This deals with the case where you did 'import foo.bar' and then
-            # used 'foo.baz'.  In this case there can't be a "from"/"as".
+            # used 'foo.baz' -- an "implicit import".
             implicit_imports = imports_by_alias_prefix.get(
                 localname.split('.', 1)[0], [])
             for imp in implicit_imports:
@@ -390,7 +429,8 @@ def _check_import_conflicts(file_info, added_name, is_alias):
 
     Suppose our file says `from foo import bar as baz` and
     we want to add `import baz` (or `import qux as baz`).
-    That's not going to work!  Similarly if our file has
+    That's not going to work!  (Python allows it but one name
+    will shadow the other.) Similarly if our file has
     `import baz.bang`.
 
     added_name should be the alias of the import, not the symbol.
@@ -448,8 +488,8 @@ def _unused_imports(imports, file_info, within_node=None):
              set of imports that may be used implicitly).
 
     "set of imports that may be used implicitly" is when we do
-    "import foo.bar" and access "foo.baz.myfunc()", which is legal
-    but weird python.
+    "import foo.bar" and access "foo.baz.myfunc()" -- see
+    special case (1) in the module docstring.
     """
     if within_node is None:
         within_node = file_info.tree
@@ -459,12 +499,12 @@ def _unused_imports(imports, file_info, within_node=None):
     used_imports = set()
     for imp in imports:
         # This includes all names that we might be *implicitly*
-        # accessing via this import, due to the python quirk
-        # around 'import foo.bar; foo.baz.myfunc()' working.
+        # accessing via this import (special case (1) of the
+        # module docstring, e.g. 'import foo.bar; foo.baz.myfunc()'.
         implicitly_used_names = _names_starting_with(
             imp.alias.split('.', 1)[0], within_node)
         # This is only those names that we are explicitly accessing
-        # via this import, i.e. not depending on the quirk.
+        # via this import, i.e. not via such an "implicit import".
         explicitly_referenced_names = [
             name for name in implicitly_used_names
             if _dotted_starts_with(name, imp.alias)]
@@ -477,8 +517,8 @@ def _unused_imports(imports, file_info, within_node=None):
             unused_imports.add(imp)
 
     # Now, if there was an import we were considering removing but which might
-    # be used implicitly, i.e., via the quirk, and we are keeping a different
-    # import that gets us the same things, we can remove the former.
+    # be used implicitly, and we are keeping a different import that gets us
+    # the same things, we can remove the former.
     for maybe_removable_imp in list(implicitly_used_imports):
         prefix = maybe_removable_imp.alias.split('.')[0]
         for kept_imp in used_imports:
@@ -527,9 +567,9 @@ def _choose_best_localname(file_info, fullname, name_to_import, import_alias):
                 "Your alias will conflict with imports in this file.")
 
     if existing_new_localnames:
+        # Prefer an existing explicit import to the caller-provided alias.
         # If for some reason there are multiple existing localnames
         # (unlikely), choose the shortest one, to save us line-wrapping.
-        # Prefer an existing explicit import to the caller-provided alias.
         # TODO(benkraft): this might not be totally safe if the existing
         # import isn't toplevel, but probably it will be.
         return min(existing_new_localnames, key=len), False
@@ -945,7 +985,8 @@ def _fix_imports_suggestor(old_fullname, new_fullname,
             explicit_imports = {
                 imp for imp in old_imports
                 # TODO(benkraft): This is too weak -- we should only
-                # call an import explicit if it is of the symbol's module.
+                # call an import explicit if it is of the symbol's module
+                # (see special case (2) in module docstring).
                 if _dotted_starts_with(old_fullname, imp.name)}
 
             if not explicit_imports:
@@ -1317,7 +1358,28 @@ def _import_sort_suggestor(project_root):
 
 def make_fixes(old_fullnames, new_fullname, import_alias=None,
                project_root='.', automove=True, verbose=False):
-    """name_to_import is the module-part of new_fullname."""
+    """Do all the fixing necessary to move old_fullnames to new_fullname.
+
+    Arguments: parallel to the commandline -- see there for details.
+
+    We proceed as follows.  Each step runs one or more khodemod suggestors to
+    make its changes.
+    1) Figure out what the inputs mean, in terms of what modules/symbols need
+       to go where (inputs.expand_and_normalize).
+    2) For each moved module or symbol:
+       2a) If automove is set, and we're moving a module, simply move it to its
+           new filename (moves.move_module_suggestor).
+       2b) If automove is set, and we're moving a symbol, first move the
+           definition-region (moves.move_symbol_suggestor), then update
+           it and the imports of the source and destination files to match
+           (_fix_moved_region_suggestor and
+           _remove_moved_region_imports_suggestor).
+    3) Fix references in all other files, including updating their imports
+       (_fix_uses_suggestor and _remove_imports_suggestor).
+    4) Clean up: remove the module(s) we moved things out of, if it is now
+       empty (_remove_empty_files_suggestor), and resort imports in any file we
+       touched (_import_sort_suggestor).
+    """
     def log(msg):
         if verbose:
             print msg
