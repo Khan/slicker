@@ -1,5 +1,8 @@
-# this is a special import block:
+from __future__ import absolute_import
+
 import foo.baz  # @UnusedImport
+# this is a special import block (and this comment ends up
+# in arguably the wrong place!)
 import quux
 
 

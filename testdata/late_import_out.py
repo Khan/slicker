@@ -1,3 +1,5 @@
+from __future__ import absolute_import
+
 import foo.baz  # should update this, for the call in g(), but we don't
 
 

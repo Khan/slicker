@@ -163,7 +163,7 @@ def _compute_all_imports(file_info, within_node=None, toplevel_only=False):
     if, functions, etc.  (We don't support setting both at once.)  Otherwise,
     look at the whole file.
 
-    Returns a set of Import objects.
+    Returns a set of Import objects.  We ignore __future__ imports.
     """
     imports = set()
     within_node = within_node or file_info.tree
@@ -180,7 +180,7 @@ def _compute_all_imports(file_info, within_node=None, toplevel_only=False):
                     imports.add(
                         Import(alias.name, alias.asname or alias.name,
                                start, end, node))
-                else:
+                elif node.module != '__future__':
                     imports.add(
                         Import('%s.%s' % (node.module, alias.name),
                                alias.asname or alias.name, start, end, node))
@@ -1280,13 +1280,42 @@ def _remove_moved_region_late_imports_suggestor(project_root, new_fullname):
 def _remove_empty_files_suggestor(filename, body):
     """Suggestor to remove any empty files we leave behind.
 
-    TODO(benkraft): Should we also warn if we leave a file that is only
-    docstrings/comments?
+    We also remove the file if it has only __future__ imports.  If all that's
+    left is docstrings, comments, and non-__future__ imports, we warn but don't
+    remove it.  (We ignore __init__.py files since those are often
+    intentionally empty or kept only for some imports.)
     """
     if os.path.basename(filename) == '__init__.py':
-        # Ignore __init__.py files, since they're often intentionally empty.
+        # Ignore __init__.py files.
         return
-    if not body.strip():
+
+    try:
+        file_info = util.File(filename, body)
+    except Exception as e:
+        raise khodemod.FatalError(filename, 0,
+                                  "Couldn't parse this file: %s" % e)
+
+    has_docstrings_comments_or_imports = '#' in body
+    for stmt in file_info.tree.body:
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Str):
+            # A docstring.
+            has_docstrings_comments_or_imports = True
+        elif isinstance(stmt, ast.ImportFrom) and stmt.module == '__future__':
+            # A __future__ import, which won't force us to keep the file.
+            pass
+        elif isinstance(stmt, (ast.Import, ast.ImportFrom)):
+            # A non-__future__ import.
+            has_docstrings_comments_or_imports = True
+        else:
+            # Some real code; we don't want to do anything.
+            return
+
+    # If we've gotten here, there's no "real code".
+    if has_docstrings_comments_or_imports:
+        yield khodemod.WarningInfo(
+            filename, 0, "This file looks mostly empty; consider removing it.")
+    else:
+        # It's actually empty, so we can just go ahead and remove.
         yield khodemod.Patch(filename, body, None, 0, len(body))
 
 
