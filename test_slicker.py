@@ -1252,6 +1252,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'const = 1\n\n\n'
                            'def myfunc(n):\n'
                            '    return myfunc(n-1) + foo.f(const)\n'))
+        self.assertFalse(self.error_output)
 
     def test_rename_and_move_references_everything_in_sight(self):
         self.write_file('foo.py',
@@ -1273,6 +1274,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'const = 1\n\n\n'
                            'def mynewerfunc(n):\n'
                            '    return mynewerfunc(n-1) + foo.f(const)\n'))
+        self.assertFalse(self.error_output)
 
     def test_move_references_same_name_in_both(self):
         self.write_file('foo.py',
@@ -1298,6 +1300,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            '    return x\n\n\n'
                            'def myfunc(n):\n'
                            '    return foo.f(f)\n'))
+        self.assertFalse(self.error_output)
 
     def test_late_import_in_moved_region(self):
         self.write_file('foo.py',
@@ -1313,6 +1316,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                           ('const = 1\n\n\n'
                            'def myfunc():\n'
                            '    return const\n'))
+        self.assertFalse(self.error_output)
 
     def test_late_import_elsewhere(self):
         self.write_file('foo.py',
@@ -1334,6 +1338,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                           ('const = 1\n\n\n'
                            'def myfunc():\n'
                            '    return const\n'))
+        self.assertFalse(self.error_output)
 
     def test_uses_other_import(self):
         self.write_file('foo.py',
@@ -1348,6 +1353,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'import bar\n\n\n'
                            'def myfunc():\n'
                            '    return bar.unrelated_function()\n'))
+        self.assertFalse(self.error_output)
 
     def test_uses_other_aliased_import(self):
         self.write_file('foo.py',
@@ -1362,6 +1368,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'import baz as bar\n\n\n'
                            'def myfunc():\n'
                            '    return bar.unrelated_function()\n'))
+        self.assertFalse(self.error_output)
 
     def test_uses_other_symbol_import(self):
         self.write_file('foo.py',
@@ -1376,6 +1383,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'from bar import unrelated_function\n\n\n'
                            'def myfunc():\n'
                            '    return unrelated_function()\n'))
+        self.assertFalse(self.error_output)
 
     def test_uses_other_implicit_import(self):
         self.write_file('foo.py',
@@ -1391,6 +1399,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'import bar.baz\n\n\n'
                            'def myfunc():\n'
                            '    return bar.qux.unrelated_function()\n'))
+        self.assertFalse(self.error_output)
 
     def test_uses_other_existing_import(self):
         self.write_file('foo.py',
@@ -1410,6 +1419,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'const = bar.thingy\n\n\n'
                            'def myfunc():\n'
                            '    return bar.unrelated_function()\n'))
+        self.assertFalse(self.error_output)
 
     def test_uses_other_import_with_mismatched_name(self):
         self.write_file('foo.py',
@@ -1429,6 +1439,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'const = baz.thingy\n\n\n'
                            'def myfunc():\n'
                            '    return baz.unrelated_function()\n'))
+        self.assertFalse(self.error_output)
 
     def test_uses_other_existing_symbol_import(self):
         self.write_file('foo.py',
@@ -1448,6 +1459,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'const = unrelated_function()\n\n\n'
                            'def myfunc():\n'
                            '    return unrelated_function()\n'))
+        self.assertFalse(self.error_output)
 
     def test_uses_other_existing_symbol_import_mismatch(self):
         self.write_file('foo.py',
@@ -1468,6 +1480,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'const = unrelated_function()\n\n\n'
                            'def myfunc():\n'
                            '    return bar.unrelated_function()\n'))
+        self.assertFalse(self.error_output)
 
     def test_uses_other_import_with_similar_existing_import(self):
         self.write_file('foo.py',
@@ -1488,6 +1501,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'const = bar.qux.thingy\n\n\n'
                            'def myfunc():\n'
                            '    return bar.baz.unrelated_function()\n'))
+        self.assertFalse(self.error_output)
 
     def test_uses_other_existing_implicit_import(self):
         self.write_file('foo.py',
@@ -1508,6 +1522,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'const = bar.qux.thingy\n\n\n'
                            'def myfunc():\n'
                            '    return bar.qux.unrelated_function()\n'))
+        self.assertFalse(self.error_output)
 
     def test_uses_other_existing_implicit_import_used_explicitly(self):
         self.write_file('foo.py',
@@ -1528,6 +1543,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'const = bar.baz.thingy\n\n\n'
                            'def myfunc():\n'
                            '    return bar.qux.unrelated_function()\n'))
+        self.assertFalse(self.error_output)
 
     def test_uses_other_implicit_import_with_existing_explicit_import(self):
         self.write_file('foo.py',
@@ -1549,6 +1565,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'const = bar.qux.thingy\n\n\n'
                            'def myfunc():\n'
                            '    return bar.qux.unrelated_function()\n'))
+        self.assertFalse(self.error_output)
 
     @unittest.skip("""Ideally, we wouldn't remove this.""")
     def test_doesnt_touch_unrelated_import_in_old(self):
@@ -1563,6 +1580,7 @@ class FixMovedRegionSuggestorTest(TestBase):
         self.assertFileIs('newfoo.py',
                           ('def myfunc():\n'
                            '    return 1\n'))
+        self.assertFalse(self.error_output)
 
     def test_doesnt_touch_unrelated_import_in_new(self):
         self.write_file('foo.py',
@@ -1577,6 +1595,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                           ('import unrelated\n\n\n'
                            'def myfunc():\n'
                            '    return 1\n'))
+        self.assertFalse(self.error_output)
 
     def test_uses_other_import_used_elsewhere(self):
         self.write_file('foo.py',
@@ -1594,6 +1613,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'import bar\n\n\n'
                            'def myfunc():\n'
                            '    return bar.unrelated_function()\n'))
+        self.assertFalse(self.error_output)
 
     def test_uses_other_import_related_import_used_elsewhere(self):
         self.write_file('foo.py',
@@ -1612,6 +1632,7 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'import bar.qux\n\n\n'
                            'def myfunc():\n'
                            '    return bar.qux.unrelated_function()\n'))
+        self.assertFalse(self.error_output)
 
     def test_uses_other_import_used_implicitly_elsewhere(self):
         self.write_file('foo.py',
@@ -1629,6 +1650,9 @@ class FixMovedRegionSuggestorTest(TestBase):
                            'import bar.baz\n\n\n'
                            'def myfunc():\n'
                            '    return bar.baz.unrelated_function()\n'))
+        self.assertEqual(self.error_output,
+                         ['WARNING:This import may be used implicitly.'
+                          '\n    on foo.py:1 --> import bar.baz'])
 
 
 class ImportSortTest(TestBase):
