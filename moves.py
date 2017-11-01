@@ -22,6 +22,9 @@ def move_module_suggestor(project_root, old_fullname, new_fullname):
         new_filename = util.filename_for_module_name(new_fullname)
         old_pathname = filename_for(old_fullname)
         new_pathname = filename_for(new_fullname)
+        # We only need to operate on the old file (although we'll generate a
+        # patch for the new one as well).  Caller should ensure this but we
+        # check to be safe.
         if (os.path.normpath(os.path.join(project_root, filename)) !=
                 os.path.normpath(old_pathname)):
             return
@@ -41,17 +44,20 @@ def move_symbol_suggestor(project_root, old_fullname, new_fullname):
     already exist (though the destination module may).
     """
     def suggestor(filename, body):
+        (old_module, old_symbol) = old_fullname.rsplit('.', 1)
+        (new_module, new_symbol) = new_fullname.rsplit('.', 1)
+
+        # We only need to operate on the old file (although we'll generate a
+        # patch for the new one as well).  Caller should ensure this but we
+        # check to be safe.
+        if filename != util.filename_for_module_name(old_module):
+            return
+
         try:
             file_info = util.File(filename, body)
         except Exception as e:
             raise khodemod.FatalError(filename, 0,
                                       "Couldn't parse this file: %s" % e)
-
-        (old_module, old_symbol) = old_fullname.rsplit('.', 1)
-        (new_module, new_symbol) = new_fullname.rsplit('.', 1)
-
-        if filename != util.filename_for_module_name(old_module):
-            return
 
         # Find where old_fullname is defined in old_module.
         # TODO(csilvers): traverse try/except, for, etc, and complain

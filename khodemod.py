@@ -255,7 +255,7 @@ class Frontend(object):
         """
         return paths
 
-    def _run_suggestor_on_file(self, suggestor, root, filename):
+    def _run_suggestor_on_file(self, suggestor, filename, root):
         """filename is relative to root."""
         try:
             # Ensure the entire suggestor runs before we start patching.
@@ -294,23 +294,31 @@ class Frontend(object):
         except FatalError as e:
             self.handle_error(root, e)
 
+    def run_suggestor_on_files(self, suggestor, filenames, root='.'):
+        """Like run_suggestor, but on exactly the given files."""
+        for filename in self.progress_bar(filenames):
+            self._run_suggestor_on_file(suggestor, filename, root)
+
     def run_suggestor(self, suggestor,
                       path_filter=default_path_filter(), root='.'):
-        filenames = resolve_paths(path_filter, root)
-        for filename in self.progress_bar(filenames):
-            self._run_suggestor_on_file(suggestor, root, filename)
+        """Run the suggestor on all files matching the path_filter."""
+        self.run_suggestor_on_files(
+            suggestor, resolve_paths(path_filter, root), root)
 
     def run_suggestor_on_modified_files(self, suggestor):
         """Like run_suggestor, but only on files we've modified.
 
         Useful for fixups after the fact that we don't want to apply to the
         whole codebase, only the files we touched.
+
+        Note that this doesn't take a root, because we use the one from
+        when we first modified the file.
         """
         for (root, filename) in self.progress_bar(self._modified_files):
             # If we modified a file by deleting it, no more
             # suggestions for you!
             if os.path.exists(os.path.join(root, filename)):
-                self._run_suggestor_on_file(suggestor, root, filename)
+                self._run_suggestor_on_file(suggestor, filename, root)
 
 
 class AcceptingFrontend(Frontend):
@@ -321,11 +329,12 @@ class AcceptingFrontend(Frontend):
 
     def progress_bar(self, paths):
         if self.verbose:
-            paths = list(
-                tqdm.tqdm(paths, desc='Computing paths', unit=' files'))
-            return tqdm.tqdm(paths, desc='Applying changes', unit=' files')
-        else:
-            return paths
+            if not isinstance(paths, (list, tuple, set, frozenset, dict)):
+                paths = list(
+                    tqdm.tqdm(paths, desc='Computing paths', unit=' files'))
+            if len(paths) > 1:
+                return tqdm.tqdm(paths, desc='Applying changes', unit=' files')
+        return paths
 
     def handle_patches(self, root, filename, patches):
         body = read_file(root, filename)

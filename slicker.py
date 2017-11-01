@@ -1037,6 +1037,7 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
         """filename is relative to the value of --root."""
         # We only need to operate on the new file; that's where the moved
         # region will be by now.  (But we do look at both old and new.)
+        # Caller should ensure this but we check to be safe.
         if util.module_name_for_filename(filename) != new_module:
             return
 
@@ -1197,7 +1198,8 @@ def _remove_old_file_imports_suggestor(project_root, old_fullname):
 
     def suggestor(filename, body):
         """filename is relative to the value of --root."""
-        # We only need to operate on the old file.
+        # We only need to operate on the old file.  Caller should ensure this
+        # but we check to be safe.
         if util.module_name_for_filename(filename) != old_module:
             return
 
@@ -1241,7 +1243,8 @@ def _remove_moved_region_late_imports_suggestor(project_root, new_fullname):
     def suggestor(filename, body):
         """filename is relative to the value of --root."""
         # We only need to operate on the new file; that's where the moved
-        # region will be by now.
+        # region will be by now.  Caller should ensure this but we check to be
+        # safe.
         if util.module_name_for_filename(filename) != new_module:
             return
 
@@ -1406,33 +1409,38 @@ def make_fixes(old_fullnames, new_fullname, import_alias=None,
 
     for (oldname, newname, is_symbol) in old_new_fullname_pairs:
         if automove:
-            # TODO(benkraft): Each of these really only wants to run on one
-            # file, and knows which; specify that in a better way rather than
-            # traversing them all.
             log("===== Moving %s to %s =====" % (oldname, newname))
             if is_symbol:
+                old_filename = util.filename_for_module_name(
+                    oldname.rsplit('.', 1)[0])
                 move_suggestor = moves.move_symbol_suggestor(
                     project_root, oldname, newname)
             else:
+                old_filename = util.filename_for_module_name(oldname)
                 move_suggestor = moves.move_module_suggestor(
                     project_root, oldname, newname)
-            frontend.run_suggestor(move_suggestor, root=project_root)
+            frontend.run_suggestor_on_files(move_suggestor, [old_filename],
+                                            root=project_root)
             if is_symbol:
+                new_filename = util.filename_for_module_name(
+                    newname.rsplit('.', 1)[0])
                 fix_moved_region_suggestor = _fix_moved_region_suggestor(
                     project_root, oldname, newname)
-                frontend.run_suggestor(
-                    fix_moved_region_suggestor, root=project_root)
+                frontend.run_suggestor_on_files(
+                    fix_moved_region_suggestor, [new_filename],
+                    root=project_root)
 
                 remove_old_file_imports_suggestor = (
                     _remove_old_file_imports_suggestor(project_root, oldname))
-                frontend.run_suggestor(
-                    remove_old_file_imports_suggestor, root=project_root)
+                frontend.run_suggestor_on_files(
+                    remove_old_file_imports_suggestor, [old_filename],
+                    root=project_root)
 
                 remove_moved_region_late_imports_suggestor = (
                     _remove_moved_region_late_imports_suggestor(
                         project_root, newname))
-                frontend.run_suggestor(
-                    remove_moved_region_late_imports_suggestor,
+                frontend.run_suggestor_on_files(
+                    remove_moved_region_late_imports_suggestor, [new_filename],
                     root=project_root)
 
         log("===== Updating references of %s to %s =====" % (oldname, newname))
