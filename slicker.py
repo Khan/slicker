@@ -928,6 +928,19 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
     """
     def suggestor(filename, body):
         """filename is relative to the value of --root."""
+        old_last_part = old_fullname.rsplit('.', 1)[-1]
+        if old_last_part not in body:
+            # As an optimization, don't operate on files that definitely don't
+            # mention the moved symbol at all.  (For many moves, that's most of
+            # them!)   We check for the last part of it, because that catches
+            # all the different ways you can refer to it (including e.g.
+            # 'import a.x ; a.b.c()' and 'from a.b import c as d ; d()').  It
+            # might be better to do a regex search for '\b<old_last_part>\b'
+            # but the difference doesn't seem worth the extra time.  This does
+            # miss one case: string references where you split the string in
+            # the middle of an identifier.  Those are hopefully rare.
+            return
+
         file_info = util.File(filename, body)
 
         # First, set things up, and do some checks.
