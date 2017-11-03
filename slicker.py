@@ -928,11 +928,7 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
     """
     def suggestor(filename, body):
         """filename is relative to the value of --root."""
-        try:
-            file_info = util.File(filename, body)
-        except Exception as e:
-            raise khodemod.FatalError(filename, 0,
-                                      "Couldn't parse this file: %s" % e)
+        file_info = util.File(filename, body)
 
         # First, set things up, and do some checks.
         assert _dotted_starts_with(new_fullname, name_to_import), (
@@ -1021,11 +1017,7 @@ def _remove_imports_suggestor(old_fullname):
             only remove imports that could have gotten us that symbol.)
     """
     def suggestor(filename, body):
-        try:
-            file_info = util.File(filename, body)
-        except Exception as e:
-            raise khodemod.FatalError(filename, 0,
-                                      "Couldn't parse this file: %s" % e)
+        file_info = util.File(filename, body)
 
         # First, set things up, and do some checks.
         # TODO(benkraft): Don't recompute these; _fix_uses_suggestor has
@@ -1078,19 +1070,11 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
         if util.module_name_for_filename(filename) != new_module:
             return
 
-        try:
-            file_info = util.File(filename, body)
-        except Exception as e:
-            raise khodemod.FatalError(filename, 0,
-                                      "Couldn't parse this file: %s" % e)
-        try:
-            old_filename = util.filename_for_module_name(old_module)
-            old_file_info = util.File(
-                old_filename,
-                khodemod.read_file(project_root, old_filename) or '')
-        except Exception as e:
-            raise khodemod.FatalError(filename, 0,
-                                      "Couldn't parse this file: %s" % e)
+        file_info = util.File(filename, body)
+        old_filename = util.filename_for_module_name(old_module)
+        old_file_info = util.File(
+            old_filename,
+            khodemod.read_file(project_root, old_filename) or '')
 
         # Find the region we moved.
         toplevel_names_in_new_file = util.toplevel_names(file_info)
@@ -1240,11 +1224,7 @@ def _remove_old_file_imports_suggestor(project_root, old_fullname):
         if util.module_name_for_filename(filename) != old_module:
             return
 
-        try:
-            file_info = util.File(filename, body)
-        except Exception as e:
-            raise khodemod.FatalError(filename, 0,
-                                      "Couldn't parse this file: %s" % e)
+        file_info = util.File(filename, body)
 
         # Remove toplevel imports in the old file that are no longer used.
         # Sadly, it's difficult to determine which ones might be at all related
@@ -1285,11 +1265,7 @@ def _remove_moved_region_late_imports_suggestor(project_root, new_fullname):
         if util.module_name_for_filename(filename) != new_module:
             return
 
-        try:
-            file_info = util.File(filename, body)
-        except Exception as e:
-            raise khodemod.FatalError(filename, 0,
-                                      "Couldn't parse this file: %s" % e)
+        file_info = util.File(filename, body)
 
         # Find the region we moved.
         toplevel_names_in_new_file = util.toplevel_names(file_info)
@@ -1329,11 +1305,7 @@ def _remove_empty_files_suggestor(filename, body):
         # Ignore __init__.py files.
         return
 
-    try:
-        file_info = util.File(filename, body)
-    except Exception as e:
-        raise khodemod.FatalError(filename, 0,
-                                  "Couldn't parse this file: %s" % e)
+    file_info = util.File(filename, body)
 
     has_docstrings_comments_or_imports = '#' in body
     for stmt in file_info.tree.body:

@@ -53,11 +53,7 @@ def move_symbol_suggestor(project_root, old_fullname, new_fullname):
         if filename != util.filename_for_module_name(old_module):
             return
 
-        try:
-            file_info = util.File(filename, body)
-        except Exception as e:
-            raise khodemod.FatalError(filename, 0,
-                                      "Couldn't parse this file: %s" % e)
+        file_info = util.File(filename, body)
 
         # Find where old_fullname is defined in old_module.
         # TODO(csilvers): traverse try/except, for, etc, and complain

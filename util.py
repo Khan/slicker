@@ -6,6 +6,8 @@ import tokenize
 
 import asttokens
 
+import khodemod
+
 
 def filename_for_module_name(module_name):
     """filename is relative to a sys.path entry, such as your project-root."""
@@ -33,7 +35,11 @@ class File(object):
     def tree(self):
         """The AST for the file.  Computed lazily on first use."""
         if self._tree is None:
-            self._tree = ast.parse(self.body)
+            try:
+                self._tree = ast.parse(self.body)
+            except SyntaxError as e:
+                raise khodemod.FatalError(self.filename, 0,
+                                          "Couldn't parse this file: %s" % e)
         return self._tree
 
     @property

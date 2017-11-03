@@ -876,6 +876,16 @@ class FixUsesTest(TestBase):
                 'ERROR:Your alias will conflict with imports in this file.\n'
                 '    on conflict_2_in.py:1 --> import quux as foo'))
 
+    def test_syntax_error(self):
+        self.create_module('foo')
+        self.run_test(
+            'syntax_error',
+            'foo.some_function', 'bar.some_function',
+            expected_error=(
+                "ERROR:Couldn't parse this file: expected an indented block "
+                "(<unknown>, line 4)\n"
+                "    on syntax_error_in.py:1 --> import foo.some_function"))
+
     def test_unused(self):
         self.create_module('foo.bar')
         self.run_test(
