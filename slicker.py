@@ -737,7 +737,6 @@ def _replace_in_file(file_info, old_fullname, old_localnames,
     # Strings
     for node in ast.walk(node_to_fix):
         if isinstance(node, ast.Str):
-            start, end = file_info.tokens.get_text_range(node)
             str_tokens = list(
                 file_info.tokens.get_tokens(node, include_extra=True))
             for regex, replacement in regexes_to_check:
