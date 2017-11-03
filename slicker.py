@@ -125,16 +125,44 @@ class FakeOptions(object):
         self.root = project_root
 
 
-# Import: an import in the file (or a part thereof, if commas are used).
-#   name: the fully-qualified symbol we imported.
-#   alias: the name under which we imported it.
-#   start, end: character-indexes delimiting the import
-#   node: the AST node for the import.
-# So for example, 'from foo import bar' would result in an Import with
-# name='foo.bar' and alias='bar'.  If it were at the start of the file it
-# would have start=0, end=19.  See test cases for more examples.
-Import = collections.namedtuple(
-    'Import', ['name', 'alias', 'start', 'end', 'node'])
+class Import(object):
+    """An import in the file (or a part thereof, if commas are used).
+
+    Properties:
+        name: the fully-qualified symbol we imported.
+        alias: the name under which we imported it.
+        node: the AST node for the import.
+
+    So for example, 'from foo import bar' would result in an Import with
+    name='foo.bar' and alias='bar'.  See test cases for more examples.
+    """
+    def __init__(self, name, alias, node, file_info):
+        # TODO(benkraft): Perhaps this class should also own extracting
+        # name/alias from node.
+        self.name = name
+        self.alias = alias
+        self.node = node
+        self._file_info = file_info
+        self._span = None  # computed lazily
+
+    @property
+    def span(self):
+        """Character offsets of the import; returns (startpos, endpos)."""
+        if self._span is None:
+            self._span = self._file_info.tokens.get_text_range(self.node)
+        return self._span
+
+    @property
+    def start(self):
+        return self.span[0]
+
+    @property
+    def end(self):
+        return self.span[1]
+
+    def __repr__(self):
+        return "Import(name=%r, alias=%r)" % (self.name, self.alias)
+
 
 # LocalName: how a particular name (symbol or module) is referenced
 #            in the current file.
@@ -174,16 +202,15 @@ def _compute_all_imports(file_info, within_node=None, toplevel_only=False):
                 # TODO(benkraft): Handle these, now that we have access to the
                 # filename we are operating on.
                 continue
-            start, end = file_info.tokens.get_text_range(node)
             for alias in node.names:
                 if isinstance(node, ast.Import):
                     imports.add(
                         Import(alias.name, alias.asname or alias.name,
-                               start, end, node))
+                               node, file_info))
                 elif node.module != '__future__':
                     imports.add(
                         Import('%s.%s' % (node.module, alias.name),
-                               alias.asname or alias.name, start, end, node))
+                               alias.asname or alias.name, node, file_info))
     return imports
 
 
@@ -579,7 +606,7 @@ def _choose_best_localname(file_info, fullname, name_to_import, import_alias):
         return fullname, True
 
 
-def _replace_in_string(str_tokens, regex, replacement, file_info):
+def _replace_in_string(node, regex, replacement, file_info):
     """Given a list of tokens representing a string, do a regex-replace.
 
     This is a bit tricky for a few reasons.  First, there may be
@@ -592,7 +619,7 @@ def _replace_in_string(str_tokens, regex, replacement, file_info):
     able to replace correctly if they're elsewhere in the string.)
 
     Arguments:
-        str_tokens: a list of tokens corresponding to an ast.Str node
+        node: an ast.Str node
         regex: a compiled regex object
         replacement: a string to replace with (note we do not support \1-style
             references)
@@ -600,6 +627,11 @@ def _replace_in_string(str_tokens, regex, replacement, file_info):
 
     Returns: a generator of khodemod.Patch objects.
     """
+    if not regex.search(node.s):
+        # The regex didn't match at all; no need to do further work.
+        return
+
+    str_tokens = file_info.tokens.get_tokens(node, include_extra=True)
     str_tokens = [tok for tok in str_tokens if tok.type == tokenize.STRING]
     tokens_less_delims = []
     delims = []
@@ -737,15 +769,21 @@ def _replace_in_file(file_info, old_fullname, old_localnames,
     # Strings
     for node in ast.walk(node_to_fix):
         if isinstance(node, ast.Str):
-            str_tokens = list(
-                file_info.tokens.get_tokens(node, include_extra=True))
+            # We compute str_tokens only if any of the regexes match
             for regex, replacement in regexes_to_check:
-                if regex.search(node.s):
-                    patches.extend(
-                        _replace_in_string(str_tokens,
-                                           regex, replacement, file_info))
+                patches.extend(
+                    _replace_in_string(node, regex, replacement, file_info))
 
     # Comments
+    # HACK: to avoid touching file_info.tokens unnecessarily, which is slow, we
+    # first check to see if the regexes appear *anywhere* in the body.  If not,
+    # they certainly can't be in a comment!  So we skip the extra parsing.
+    for regex, replacement in regexes_to_check:
+        if regex.search(file_info.body):
+            break
+    else:
+        return patches, used_localnames
+
     for token in file_info.tokens.get_tokens(node_to_fix, include_extra=True):
         if token.type == tokenize.COMMENT:
             for regex, replacement in regexes_to_check:

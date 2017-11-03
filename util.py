@@ -26,8 +26,27 @@ class File(object):
         """filename is relative to the value of --root."""
         self.filename = filename
         self.body = body
-        self.tree = ast.parse(body)
-        self.tokens = asttokens.ASTTokens(body, tree=self.tree)
+        self._tree = None    # computed lazily
+        self._tokens = None  # computed lazily
+
+    @property
+    def tree(self):
+        """The AST for the file.  Computed lazily on first use."""
+        if self._tree is None:
+            self._tree = ast.parse(self.body)
+        return self._tree
+
+    @property
+    def tokens(self):
+        """The asttokens.ASTTokens mapping for the file.
+
+        This is computed lazily on first use, and is somewhat slow to compute,
+        so we try to only use it when we need to (i.e. on files we are
+        editing).
+        """
+        if self._tokens is None:
+            self._tokens = asttokens.ASTTokens(self.body, tree=self.tree)
+        return self._tokens
 
 
 def is_newline(token):

@@ -84,13 +84,12 @@ class ComputeAllImportsTest(unittest.TestCase):
     # TODO(benkraft): Move more of the explosion of cases here from
     # LocalNamesFromFullNamesTest and LocalNamesFromLocalNamesTest.
     def _assert_imports(self, actual, expected):
-        """Assert the imports match the given tuples, less AST nodes."""
+        """Assert the imports match given (name, alias, start, end) tuples."""
         modified_actual = set()
         for imp in actual:
             self.assertIsInstance(imp, slicker.Import)
-            (name, alias, start, end, node) = imp
-            self.assertIsInstance(node, (ast.Import, ast.ImportFrom))
-            modified_actual.add((name, alias, start, end))
+            self.assertIsInstance(imp.node, (ast.Import, ast.ImportFrom))
+            modified_actual.add((imp.name, imp.alias, imp.start, imp.end))
 
         self.assertEqual(modified_actual, expected)
 
@@ -131,10 +130,9 @@ class LocalNamesFromFullNamesTest(unittest.TestCase):
                 modified_actual.add((fullname, ln, None))
             else:
                 self.assertIsInstance(imp, slicker.Import)
-                (name, alias, start, end, node) = imp
-                self.assertIsInstance(node, (ast.Import, ast.ImportFrom))
+                self.assertIsInstance(imp.node, (ast.Import, ast.ImportFrom))
                 modified_actual.add(
-                    (fullname, ln, (name, alias, start, end)))
+                    (fullname, ln, (imp.name, imp.alias, imp.start, imp.end)))
         self.assertEqual(modified_actual, expected)
 
     # TODO(benkraft): Move some of this to a separate ComputeAllImportsTest.
@@ -402,10 +400,9 @@ class LocalNamesFromLocalNamesTest(unittest.TestCase):
                 modified_actual.add((fullname, ln, None))
             else:
                 self.assertIsInstance(imp, slicker.Import)
-                (name, alias, start, end, node) = imp
-                self.assertIsInstance(node, (ast.Import, ast.ImportFrom))
+                self.assertIsInstance(imp.node, (ast.Import, ast.ImportFrom))
                 modified_actual.add(
-                    (fullname, ln, (name, alias, start, end)))
+                    (fullname, ln, (imp.name, imp.alias, imp.start, imp.end)))
         self.assertEqual(modified_actual, expected)
 
     # TODO(benkraft): Move some of this to a separate ComputeAllImportsTest.
