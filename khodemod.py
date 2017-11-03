@@ -43,6 +43,10 @@ DEFAULT_EXCLUDE_PATHS = ('genfiles', 'third_party')
 DEFAULT_EXTENSIONS = ('py',)
 
 
+# Dict from (path-filter function, root) to the actual list of paths.
+_RESOLVE_PATHS_CACHE = {}
+
+
 def regex_suggestor(regex, replacement):
     """Replaces regex (object) with replacement.
 
@@ -158,14 +162,41 @@ def read_file(root, filename):
         raise
 
 
-def resolve_paths(path_filter, root='.'):
-    """All files under root (relative to root), ignoring filtered files."""
+def _resolve_paths(path_filter, root='.'):
+    """Actually resolve the paths, and update the cache.
+
+    Returns a generator; we need to return a generator when path computation is
+    nontrivial, so the caller can, if desired, show a progress bar for that
+    operation.
+    TODO(benkraft): There's probably a cleaner way, e.g. we could own our own
+    progress bar, or accept a progress-bar fn.
+    """
+    paths = []
     for dirpath, dirnames, filenames in os.walk(root):
         # TODO(benkraft): Avoid traversing excluded directories.
         for name in filenames:
             relname = os.path.relpath(os.path.join(dirpath, name), root)
             if path_filter(relname):
+                paths.append(relname)
                 yield relname
+
+    # We're done; we can cache the result now.
+    _RESOLVE_PATHS_CACHE[(path_filter, root)] = paths
+
+
+def resolve_paths(path_filter, root='.'):
+    """All files under root (relative to root), ignoring filtered files.
+
+    This is cached across runs over the same path_filter function,
+    although note that if you iterate only partway through the
+    returned iterable the cache may not get populated.
+    """
+    cached_value = _RESOLVE_PATHS_CACHE.get((path_filter, root))
+    if cached_value is not None:
+        return cached_value
+    else:
+        # This is a generator; it will update the cache when exhausted.
+        return _resolve_paths(path_filter, root)
 
 
 def pos_to_line_col(text, pos):
@@ -234,6 +265,8 @@ class Frontend(object):
         if text is None:    # it means we want to delete filename
             try:
                 os.unlink(abspath)
+                # We changed what files exist: clear the cache.
+                _RESOLVE_PATHS_CACHE.clear()
             except OSError as e:
                 if e.errno == 2:   # No such file: already deleted
                     pass
@@ -244,6 +277,9 @@ class Frontend(object):
                 os.makedirs(os.path.dirname(abspath))
             except (IOError, OSError):  # hopefully "directory already exists"
                 pass
+            if not os.path.exists(abspath):
+                # We changed what files exist: clear the cache.
+                _RESOLVE_PATHS_CACHE.clear()
             with open(abspath, 'w') as f:
                 f.write(text)
                 self._modified_files.add((root, filename))
