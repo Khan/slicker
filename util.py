@@ -7,6 +7,7 @@ import tokenize
 import asttokens
 
 import khodemod
+import unicode_util
 
 
 def filename_for_module_name(module_name):
@@ -36,7 +37,13 @@ class File(object):
         """The AST for the file.  Computed lazily on first use."""
         if self._tree is None:
             try:
-                self._tree = ast.parse(self.body)
+                # ast.parse would really prefer to run on bytes.
+                # Luckily we ignore all of the (useless) line/col
+                # information in the AST nodes -- we get it via
+                # asttokens instead -- so we don't have to worry
+                # about the fact that these will be byte offsets.
+                self._tree = ast.parse(
+                    unicode_util.encode(self.filename, self.body))
             except SyntaxError as e:
                 raise khodemod.FatalError(self.filename, 0,
                                           "Couldn't parse this file: %s" % e)

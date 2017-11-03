@@ -38,6 +38,8 @@ import os
 
 import tqdm
 
+import unicode_util
+
 
 DEFAULT_EXCLUDE_PATHS = ('genfiles', 'third_party')
 DEFAULT_EXTENSIONS = ('py',)
@@ -62,11 +64,12 @@ def regex_suggestor(regex, replacement):
     return suggestor
 
 
-# old/new are strings; start/end are character offsets for the old text.
+# old/new are unicode;
+# start/end are (unicode) character offsets for the old text.
 # TODO(benkraft): Include context for patching?
 _Patch = collections.namedtuple('Patch',
                                 ['filename', 'old', 'new', 'start', 'end'])
-# pos is a character offset for the warning.
+# pos is a (unicode) character offset for the warning.
 WarningInfo = collections.namedtuple('WarningInfo',
                                      ['filename', 'pos', 'message'])
 
@@ -155,7 +158,7 @@ def read_file(root, filename):
     # TODO(benkraft): Cache contents.
     try:
         with open(os.path.join(root, filename)) as f:
-            return f.read()
+            return unicode_util.decode(filename, f.read())
     except IOError as e:
         if e.errno == 2:    # No such file
             return None     # empty file
@@ -281,7 +284,7 @@ class Frontend(object):
                 # We changed what files exist: clear the cache.
                 _RESOLVE_PATHS_CACHE.clear()
             with open(abspath, 'w') as f:
-                f.write(text)
+                f.write(unicode_util.encode(filename, text))
                 self._modified_files.add((root, filename))
 
     def progress_bar(self, paths):

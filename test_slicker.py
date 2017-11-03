@@ -964,6 +964,12 @@ class FixUsesTest(TestBase):
             'destination_file_2',
             'somewhere_else.myfunc', 'destination_file_2_in.myfunc')
 
+    def test_unicode(self):
+        self.create_module('foo')
+        self.run_test(
+            'unicode',
+            'foo.some_function', 'bar.new_name')
+
 
 class FixMovedRegionSuggestorTest(TestBase):
     def test_rename_references_self(self):
