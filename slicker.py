@@ -1491,9 +1491,6 @@ def make_fixes(old_fullnames, new_fullname, import_alias=None,
 
 
 def main():
-    # TODO(benkraft): Allow moving multiple symbols (from/to the same modules)
-    # at once.
-    # TODO(csilvers): allow moving multiple files into a single directory too.
     parser = argparse.ArgumentParser()
     parser.add_argument('old_fullnames', metavar='old_fullname', nargs='+',
                         help=('fullname to move: can be path.to.package, '
