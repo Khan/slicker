@@ -26,8 +26,10 @@ TERMS:
     directory.
 "path_filter": These are how one decides what code to operate on: one passes a
     path filter, which is just a function which takes a filename relative to
-    "root" and returns True if we should operate on it.  These are useful for
-    ignoring generated files and the like.
+    "root" and returns True if we should operate on it.  (It may also be passed
+    a directory, which will end with a slash; if it returns False we skip the
+    entire directory.)  These are useful for ignoring generated files and the
+    like.
 
 TODO(benkraft): Implement a commandline interface for the regex suggestors.
 """
@@ -116,6 +118,9 @@ def extensions_path_filter(extensions, include_extensionless=False):
         return lambda path: True
 
     def filter_path(path):
+        if path.endswith('/'):
+            # Always include directories.
+            return True
         _, ext = os.path.splitext(path)
         if not ext and include_extensionless:
             return True
@@ -176,7 +181,15 @@ def _resolve_paths(path_filter, root='.'):
     """
     paths = []
     for dirpath, dirnames, filenames in os.walk(root):
-        # TODO(benkraft): Avoid traversing excluded directories.
+        # Prune directories to traverse according to the path filter.
+        # Go in reverse order to keep indexes the same as we delete things.
+        for i, name in reversed(list(enumerate(dirnames))):
+            relname = os.path.relpath(os.path.join(dirpath, name), root)
+            relname = os.path.join(relname, '')    # add trailing slash
+            if not path_filter(relname):
+                del dirnames[i]
+
+        # Filter filenames and yield according to the path filter.
         for name in filenames:
             relname = os.path.relpath(os.path.join(dirpath, name), root)
             if path_filter(relname):
