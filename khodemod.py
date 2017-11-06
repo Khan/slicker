@@ -118,7 +118,7 @@ def extensions_path_filter(extensions, include_extensionless=False):
         return lambda path: True
 
     def filter_path(path):
-        if path.endswith('/'):
+        if path.endswith(os.sep):
             # Always include directories.
             return True
         _, ext = os.path.splitext(path)
