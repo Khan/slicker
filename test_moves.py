@@ -21,6 +21,19 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
         slicker.make_fixes(['foo'], 'baz.bang',
                            project_root=self.tmpdir)
         self.assertFileIs('baz/bang.py', 'def myfunc(): return 4\n')
+        self.assertFileIs('baz/__init__.py', '')
+        self.assertFileIs('bar.py', 'import baz.bang\n\nbaz.bang.myfunc()\n')
+        self.assertFileIsNot('foo.py')
+        self.assertFalse(self.error_output)
+
+    def test_move_module_to_directory_with_a_nonempty_init_py(self):
+        self.write_file('foo.py', 'def myfunc(): return 4\n')
+        self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
+        self.write_file('baz/__init__.py', '# Non-empty init.py\n')
+        slicker.make_fixes(['foo'], 'baz.bang',
+                           project_root=self.tmpdir)
+        self.assertFileIs('baz/bang.py', 'def myfunc(): return 4\n')
+        self.assertFileIs('baz/__init__.py', '# Non-empty init.py\n')
         self.assertFileIs('bar.py', 'import baz.bang\n\nbaz.bang.myfunc()\n')
         self.assertFileIsNot('foo.py')
         self.assertFalse(self.error_output)
@@ -44,6 +57,7 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
                            project_root=self.tmpdir)
         self.assertFileIs('bang.py', 'def myfunc(): return 4\n')
         self.assertFileIs('baz.py', 'import bang\n\nbang.myfunc()\n')
+        self.assertFileIs('__init__.py', '')
         self.assertFileIsNot('foo/bar.py')
         self.assertFalse(self.error_output)
         # TODO(csilvers): assert that the whole dir `foo` has gone away.
@@ -111,6 +125,7 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py', 'class Classy(object): return 17\n')
         self.assertFileIsNot('foo.py')
+        self.assertFileIs('__init__.py', '')
         self.assertFalse(self.error_output)
 
     def test_move_constant(self):
@@ -118,6 +133,15 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
         slicker.make_fixes(['foo.CACHE'], 'newfoo.CACHE',
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py', 'CACHE = {}\n')
+        self.assertFileIsNot('foo.py')
+        self.assertFalse(self.error_output)
+
+    def test_move_to_a_new_dir(self):
+        self.write_file('foo.py', 'CACHE = {}\n')
+        slicker.make_fixes(['foo.CACHE'], 'newfoo.bar.CACHE',
+                           project_root=self.tmpdir)
+        self.assertFileIs('newfoo/bar.py', 'CACHE = {}\n')
+        self.assertFileIs('newfoo/__init__.py', '')
         self.assertFileIsNot('foo.py')
         self.assertFalse(self.error_output)
 

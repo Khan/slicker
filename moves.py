@@ -8,6 +8,17 @@ import khodemod
 import util
 
 
+def _add_init_py(project_root, filename):
+    """Make sure __init__.py exists in every dir from dir(filename)->root."""
+    dirname = os.path.dirname(filename)
+    while True:
+        yield khodemod.Patch(os.path.join(dirname, '__init__.py'),
+                             None, '', 0, 0)
+        if not dirname:
+            break
+        dirname = os.path.dirname(dirname)
+
+
 def move_module_suggestor(project_root, old_fullname, new_fullname):
     """Move a module from old_fullname to new_fullname.
 
@@ -28,10 +39,17 @@ def move_module_suggestor(project_root, old_fullname, new_fullname):
         if (os.path.normpath(os.path.join(project_root, filename)) !=
                 os.path.normpath(old_pathname)):
             return
-        assert not os.path.exists(new_pathname), new_pathname
+        # We don't expect new_pathname to exist, but we allow it if
+        # it's an empty file.  This can happen with __init__.py
+        # files, which we create sometimes.
+        assert (not os.path.exists(new_pathname) or
+                os.stat(new_pathname).st_size == 0), new_pathname
 
         yield khodemod.Patch(filename, body, None, 0, len(body))
         yield khodemod.Patch(new_filename, None, body, 0, 0)
+
+        for patch in _add_init_py(project_root, new_filename):
+            yield patch
 
     return suggestor
 
@@ -139,5 +157,10 @@ def move_symbol_suggestor(project_root, old_fullname, new_fullname):
                                  len(new_file_body), len(new_file_body))
 
             # TODO(benkraft): Fix up imports in the new and old modules.
+
+        new_filename = util.filename_for_module_name(new_module)
+        for patch in _add_init_py(project_root, new_filename):
+            yield patch
+
 
     return suggestor
