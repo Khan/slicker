@@ -1496,7 +1496,8 @@ def main():
                         help=('fullname to move: can be path.to.package, '
                               'path.to.package.module, '
                               'path.to.package.module.symbol, '
-                              'some/dir, or some/dir/file.py'))
+                              'some/dir, some/dir/file.py, or "-" to read '
+                              'such inputs from stdin (one per line)'))
     parser.add_argument('new_fullname',
                         help=('fullname to rename to. This can always be of '
                               'the same "type" as old_fullname, but can '
@@ -1521,8 +1522,13 @@ def main():
                         help="Print some information about what we're doing.")
     parsed_args = parser.parse_args()
 
+    if parsed_args.old_fullnames == ['-']:
+        old_fullnames = sys.stdin.read().splitlines()
+    else:
+        old_fullnames = parsed_args.old_fullnames
+
     make_fixes(
-        parsed_args.old_fullnames, parsed_args.new_fullname,
+        old_fullnames, parsed_args.new_fullname,
         import_alias=parsed_args.alias,
         project_root=parsed_args.root,
         automove=parsed_args.automove,
