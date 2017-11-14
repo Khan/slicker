@@ -57,7 +57,6 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
                            project_root=self.tmpdir)
         self.assertFileIs('bang.py', 'def myfunc(): return 4\n')
         self.assertFileIs('baz.py', 'import bang\n\nbang.myfunc()\n')
-        self.assertFileIs('__init__.py', '')
         self.assertFileIsNot('foo/bar.py')
         self.assertFalse(self.error_output)
         # TODO(csilvers): assert that the whole dir `foo` has gone away.
@@ -125,7 +124,6 @@ class SymbolMoveSuggestorTest(test_slicker.TestBase):
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py', 'class Classy(object): return 17\n')
         self.assertFileIsNot('foo.py')
-        self.assertFileIs('__init__.py', '')
         self.assertFalse(self.error_output)
 
     def test_move_constant(self):

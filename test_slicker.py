@@ -883,6 +883,13 @@ class FixUsesTest(TestBase):
             'foo.bar.interesting_function', 'bar.interesting_function',
             import_alias='foo')
 
+    def test_no_conflict_when_moving_to_from(self):
+        self.create_module('foo')
+        self.run_test(
+            'moving_to_from',
+            'foo', 'bar.foo',
+            import_alias='foo')
+
     def test_syntax_error(self):
         self.create_module('foo')
         self.run_test(

@@ -451,7 +451,7 @@ def _names_starting_with(prefix, ast_node):
     return retval
 
 
-def _check_import_conflicts(file_info, added_name, is_alias):
+def _check_import_conflicts(file_info, old_fullname, added_name, is_alias):
     """Return any imports that will conflict with ours.
 
     Suppose our file says `from foo import bar as baz` and
@@ -467,13 +467,18 @@ def _check_import_conflicts(file_info, added_name, is_alias):
     TODO(benkraft): If that's due to our alias, we could avoid using
     said alias.
     TODO(benkraft): We shouldn't consider it a conflict if the only
-    user of the conflicting import is the moved symbol.
+    user of the conflicting import is the moved symbol.  (We do that
+    now for full-file moves but not for symbol-moves.)
     TODO(benkraft): Also check if there are variable-names that
     collide.
     TODO(benkraft): Also check if there are names defined in the
     file that collide.
     """
     imports = _compute_all_imports(file_info)
+
+    # Ignore imports of old_fullname, those are going to be deleted.
+    imports = {imp for imp in imports if imp.name != old_fullname}
+
     # TODO(csilvers): perhaps a more self-evident way to code this would
     # be: complain if there is any shared prefix between added_import.alias
     # and some_existing_import.alias.
@@ -497,7 +502,7 @@ def _check_import_conflicts(file_info, added_name, is_alias):
                 if _dotted_starts_with(added_name, imp.alias)}
 
 
-def _unused_imports(imports, file_info, within_node=None):
+def _unused_imports(imports, old_fullname, file_info, within_node=None):
     """Decide what imports we can remove.
 
     Note that this should be run after the patches to references in the file
@@ -507,6 +512,10 @@ def _unused_imports(imports, file_info, within_node=None):
         imports: set of imports to consider removing.  These should likely be
             the imports that got us the symbol whose references you're
             updating.
+        old_fullname: the fullname we deleted.  If it's of a module, then
+            imports of that module are definitely unused (as that module
+            no longer exists).  If it's of a symbol, this is ignored
+            unless old_fullname was an import of just that symbol.
         file_info: the util.File object.
         within_node: if set, only consider imports within this AST node.
             (Useful for deciding whether to remove imports in that node.)
@@ -536,7 +545,9 @@ def _unused_imports(imports, file_info, within_node=None):
             name for name in implicitly_used_names
             if _dotted_starts_with(name, imp.alias)]
 
-        if explicitly_referenced_names:
+        if imp.name == old_fullname:
+            unused_imports.add(imp)
+        elif explicitly_referenced_names:
             used_imports.add(imp)
         elif implicitly_used_names:
             implicitly_used_imports.add(imp)
@@ -957,7 +968,8 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
         # Finally, add a new import, if necessary.
         if need_new_import and used_localnames:
             conflicting_imports = _check_import_conflicts(
-                file_info, import_alias or name_to_import, bool(import_alias))
+                file_info, old_fullname, import_alias or name_to_import,
+                bool(import_alias))
             if conflicting_imports:
                 raise khodemod.FatalError(
                     file_info.filename, conflicting_imports.pop().start,
@@ -1039,7 +1051,7 @@ def _remove_imports_suggestor(old_fullname):
 
         # Next, remove imports, if any are now unused.
         unused_imports, implicitly_used_imports = _unused_imports(
-            old_imports, file_info)
+            old_imports, old_fullname, file_info)
 
         for imp in implicitly_used_imports:
             yield khodemod.WarningInfo(
@@ -1198,7 +1210,7 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
             # complicate things much here.
             if used_localnames and need_new_import:
                 conflicting_imports = _check_import_conflicts(
-                    file_info, import_alias or name_to_import,
+                    file_info, old_fullname, import_alias or name_to_import,
                     bool(import_alias))
                 if conflicting_imports:
                     raise khodemod.FatalError(
@@ -1251,7 +1263,8 @@ def _remove_old_file_imports_suggestor(project_root, old_fullname):
         # to the moved code, so we just remove anything that looks unused.
         # TODO(benkraft): Be more precise so we don't touch unrelated things.
         unused_imports, implicitly_used_imports = _unused_imports(
-            _compute_all_imports(file_info, toplevel_only=True), file_info)
+            _compute_all_imports(file_info, toplevel_only=True),
+            old_fullname, file_info)
         for imp in implicitly_used_imports:
             yield khodemod.WarningInfo(
                 filename, imp.start, "This import may be used implicitly.")
@@ -1303,7 +1316,7 @@ def _remove_moved_region_late_imports_suggestor(project_root, new_fullname):
             {imp for imp in _compute_all_imports(
                 file_info, within_node=moved_node)
              if _import_provides_module(imp, new_module)},
-            file_info, within_node=moved_node)
+            None, file_info, within_node=moved_node)
         for imp in implicitly_used_imports:
             yield khodemod.WarningInfo(
                 filename, imp.start, "This import may be used implicitly.")

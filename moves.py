@@ -9,13 +9,12 @@ import util
 
 
 def _add_init_py(filename):
-    """Make sure __init__.py exists in every dir from dir(filename)->root."""
+    """Make sure __init__.py exists in every dir from dir(filename)..root."""
     dirname = os.path.dirname(filename)
-    while True:
+    # We do not put an __init__.py in the rootdir itself; it doesn't need one.
+    while dirname:
         yield khodemod.Patch(os.path.join(dirname, '__init__.py'),
                              None, '', 0, 0)
-        if not dirname:
-            break
         dirname = os.path.dirname(dirname)
 
 
