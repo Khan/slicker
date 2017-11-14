@@ -8,7 +8,7 @@ import khodemod
 import util
 
 
-def _add_init_py(project_root, filename):
+def _add_init_py(filename):
     """Make sure __init__.py exists in every dir from dir(filename)->root."""
     dirname = os.path.dirname(filename)
     while True:
@@ -48,7 +48,7 @@ def move_module_suggestor(project_root, old_fullname, new_fullname):
         yield khodemod.Patch(filename, body, None, 0, len(body))
         yield khodemod.Patch(new_filename, None, body, 0, 0)
 
-        for patch in _add_init_py(project_root, new_filename):
+        for patch in _add_init_py(new_filename):
             yield patch
 
     return suggestor
@@ -159,7 +159,7 @@ def move_symbol_suggestor(project_root, old_fullname, new_fullname):
             # TODO(benkraft): Fix up imports in the new and old modules.
 
         new_filename = util.filename_for_module_name(new_module)
-        for patch in _add_init_py(project_root, new_filename):
+        for patch in _add_init_py(new_filename):
             yield patch
 
 
