@@ -876,6 +876,13 @@ class FixUsesTest(TestBase):
                 'ERROR:Your alias will conflict with imports in this file.\n'
                 '    on conflict_2_in.py:1 --> import quux as foo'))
 
+    def test_unused_conflict(self):
+        self.create_module('foo.bar')
+        self.run_test(
+            'unused_conflict',
+            'foo.bar.interesting_function', 'bar.interesting_function',
+            import_alias='foo')
+
     def test_syntax_error(self):
         self.create_module('foo')
         self.run_test(

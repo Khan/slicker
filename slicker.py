@@ -585,14 +585,6 @@ def _choose_best_localname(file_info, fullname, name_to_import, import_alias):
         if ln.imp is None or name_to_import == ln.imp.name
     }
 
-    if not existing_new_localnames:
-        conflicting_imports = _check_import_conflicts(
-            file_info, import_alias or name_to_import, bool(import_alias))
-        if conflicting_imports:
-            raise khodemod.FatalError(
-                file_info.filename, conflicting_imports.pop().start,
-                "Your alias will conflict with imports in this file.")
-
     if existing_new_localnames:
         # Prefer an existing explicit import to the caller-provided alias.
         # If for some reason there are multiple existing localnames
@@ -964,6 +956,13 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
 
         # Finally, add a new import, if necessary.
         if need_new_import and used_localnames:
+            conflicting_imports = _check_import_conflicts(
+                file_info, import_alias or name_to_import, bool(import_alias))
+            if conflicting_imports:
+                raise khodemod.FatalError(
+                    file_info.filename, conflicting_imports.pop().start,
+                    "Your alias will conflict with imports in this file.")
+
             # Decide what the import will say.
             import_stmt = _new_import_stmt(name_to_import, import_alias)
 
@@ -1198,6 +1197,14 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
             # to _remove_moved_region_imports_suggestor.  Luckily, that doesn't
             # complicate things much here.
             if used_localnames and need_new_import:
+                conflicting_imports = _check_import_conflicts(
+                    file_info, import_alias or name_to_import,
+                    bool(import_alias))
+                if conflicting_imports:
+                    raise khodemod.FatalError(
+                        file_info.filename, conflicting_imports.pop().start,
+                        "Your alias will conflict with imports in this file.")
+
                 if imp:
                     start, end = util.get_area_for_ast_node(
                         imp.node, old_file_info,
