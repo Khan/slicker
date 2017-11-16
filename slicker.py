@@ -1553,7 +1553,7 @@ def main():
                         help=('Alias to use when adding new import lines.  '
                               'This is the module-alias, even if you are '
                               'moving a symbol.'))
-    parser.add_argument('-f', '--use-from',
+    parser.add_argument('-f', '--use-from', action='store_true',
                         help=('Use from-imports for all moved symbols. '
                               'The same as `-a basename(new_fullname)`,'
                               'but more useful with multiple input files.'))
