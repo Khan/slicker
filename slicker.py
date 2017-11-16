@@ -102,6 +102,15 @@ def _re_for_name(name):
                       re.escape(name).replace(r'\.', r'\s*\.\s*'))
 
 
+def _re_for_path(path):
+    """Find a filename path that matches this path.
+
+    Note we do not match supersets of the path, so if path is
+    a/b/c.py we do not match d/a/b/c.py.
+    """
+    return re.compile(r'(?<!/)\b%s\b' % re.escape(path))
+
+
 def _dotted_starts_with(string, prefix):
     """Like string.startswith(prefix), but in the dotted sense.
 
@@ -767,7 +776,7 @@ def _replace_in_file(file_info, old_fullname, old_localnames,
         # In cases where the fullname is not a module (but is instead
         # module.symbol) this will typically be a noop.
         regexes_to_check.append((
-            re.compile(re.escape(util.filename_for_module_name(old_fullname))),
+            _re_for_path(util.filename_for_module_name(old_fullname)),
             util.filename_for_module_name(new_fullname)))
     for localname in old_localnames - {new_localname, old_fullname}:
         regexes_to_check.append((_re_for_name(localname), new_localname))

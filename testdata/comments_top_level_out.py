@@ -2,6 +2,10 @@
 
 Also mentions quux.mod.some_function in the body, for good measure.  FYI: the
 function comes from quux/mod.py.
+
+Here are some things that should not be changed when we rewrite:
+foo_bar bar_foo bar_foo_baz foobar barfoo barfoobaz
+barfoo.py bar/foo.py foo.python
 """
 import quux.mod as al
 
