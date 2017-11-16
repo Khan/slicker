@@ -91,11 +91,14 @@ def _re_for_name(name):
     """Find a dotted-name (a.b.c) given that Python allows whitespace.
 
     Note we check for *top-level* dotted names, so we would not match
-    'd.a.b.c.'
+    'd.a.b.c.'  We also don't allow the name to be followed by a `.py`,
+    which means that it's a filename and not a dotted-name.  (This
+    only matters when name matches a module at the top level, and has
+    no interior dots.)
     """
     # TODO(csilvers): replace '\s*' by '\s*#\s*' below, and then we
     # can use this to match line-broken dotted-names inside comments too!
-    return re.compile(r'(?<!\.)\b%s\b' %
+    return re.compile(r'(?<!\.)\b%s\b(?!\.py)' %
                       re.escape(name).replace(r'\.', r'\s*\.\s*'))
 
 

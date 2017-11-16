@@ -940,6 +940,12 @@ class FixUsesTest(TestBase):
             'comments_whole_file',
             'foo.bar', 'quux.mod', import_alias='al')
 
+    def test_comments_top_level(self):
+        self.create_module('foo')
+        self.run_test(
+            'comments_top_level',
+            'foo', 'quux.mod', import_alias='al')
+
     def test_source_file(self):
         """Test fixing up uses in the source of the move itself.
 
