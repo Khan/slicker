@@ -740,7 +740,7 @@ class RootTest(TestBase):
 
 class FixUsesTest(TestBase):
     def run_test(self, filebase, old_fullname, new_fullname,
-                 import_alias=None,
+                 import_alias=None, use_from=None,
                  expected_warnings=(), expected_error=None):
         if expected_error:
             expected = None
@@ -751,7 +751,7 @@ class FixUsesTest(TestBase):
         self.copy_file('%s_in.py' % filebase)
 
         slicker.make_fixes([old_fullname], new_fullname,
-                           import_alias, project_root=self.tmpdir,
+                           import_alias, use_from, project_root=self.tmpdir,
                            # Since we just create placeholder files for the
                            # moved symbol, we won't be able to find it,
                            # which introduces a spurious error.

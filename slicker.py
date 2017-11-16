@@ -1417,7 +1417,7 @@ def _import_sort_suggestor(project_root):
     return suggestor
 
 
-def make_fixes(old_fullnames, new_fullname, import_alias=None,
+def make_fixes(old_fullnames, new_fullname, import_alias=None, use_from=None,
                project_root='.', automove=True, verbose=False):
     """Do all the fixing necessary to move old_fullnames to new_fullname.
 
@@ -1494,8 +1494,15 @@ def make_fixes(old_fullnames, new_fullname, import_alias=None,
         else:
             name_to_import = newname
 
+        if import_alias:
+            our_import_alias = import_alias
+        elif use_from:
+            our_import_alias = newname.rsplit('.', 1)[-1]
+        else:
+            our_import_alias = None
+
         fix_uses_suggestor = _fix_uses_suggestor(
-            oldname, newname, name_to_import, import_alias)
+            oldname, newname, name_to_import, our_import_alias)
         frontend.run_suggestor(fix_uses_suggestor, root=project_root)
 
         remove_imports_suggestor = _remove_imports_suggestor(oldname)
@@ -1537,6 +1544,10 @@ def main():
                         help=('Alias to use when adding new import lines.  '
                               'This is the module-alias, even if you are '
                               'moving a symbol.'))
+    parser.add_argument('-f', '--use-from',
+                        help=('Use from-imports for all moved symbols. '
+                              'The same as `-a basename(new_fullname)`,'
+                              'but more useful with multiple input files.'))
     parser.add_argument('--root', default='.',
                         help=('The project-root of the directory-tree you '
                               'want to do the renaming in.  old_fullname, '
@@ -1553,6 +1564,7 @@ def main():
     make_fixes(
         old_fullnames, parsed_args.new_fullname,
         import_alias=parsed_args.alias,
+        use_from=parsed_args.use_from,
         project_root=parsed_args.root,
         automove=parsed_args.automove,
         verbose=parsed_args.verbose)
