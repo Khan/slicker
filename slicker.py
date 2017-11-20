@@ -77,6 +77,7 @@ import difflib
 import itertools
 import os
 import re
+import string
 import sys
 import tokenize
 
@@ -90,16 +91,31 @@ import util
 def _re_for_name(name):
     """Find a dotted-name (a.b.c) given that Python allows whitespace.
 
-    Note we check for *top-level* dotted names, so we would not match
-    'd.a.b.c.'  We also don't allow the name to be followed by a `.py`,
-    which means that it's a filename and not a dotted-name.  (This
-    only matters when name matches a module at the top level, and has
-    no interior dots.)
+    This is actually pretty tricky.  Here are some issues:
+    1) We don't want a name `a.b.c` to match `d.a.b.c`.
+    2) We don't want a name `foo` to match `foo.py` -- that's a filename,
+       not a module-name (and is handled separately).
+    3) We don't want a name `browser` to match text like
+       "# Open a new browser window"
+
+    The first two issues are easy to handle.  For the third, we add a
+    special case for "English-seeming" names: those that have only
+    alphabetic chars.  For those words, we only rename them if they're
+    followed by a dot (which could be module.function) or match
+    the entire string (which could be a mock or some other literal
+    use).  We also allow surrounded-by-backticks, since that's
+    markup-language for "code".
     """
     # TODO(csilvers): replace '\s*' by '\s*#\s*' below, and then we
     # can use this to match line-broken dotted-names inside comments too!
-    return re.compile(r'(?<!\.)\b%s\b(?!\.py)' %
-                      re.escape(name).replace(r'\.', r'\s*\.\s*'))
+    name_with_spaces = re.escape(name).replace(r'\.', r'\s*\.\s*')
+    if not name.strip(string.ascii_letters):
+        # Name is entirely alphabetic.
+        return re.compile(r'(?<!\.)\b%s(?=\.)(?!\.py)|^%s$|(?<=`)%s(?=`)'
+                          % (name_with_spaces, name_with_spaces,
+                             name_with_spaces))
+    else:
+        return re.compile(r'(?<!\.)\b%s\b(?!\.py)' % name_with_spaces)
 
 
 def _re_for_path(path):

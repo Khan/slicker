@@ -348,7 +348,7 @@ def the_suggestor(old_name, new_name, use_alias=None):
 
 
 def main():
-    # TODO(benkraft): support other codemod_fork args
+    # TODO(benkraft): support other codemod args
     # TODO(benkraft): Allow moving multiple symbols (from/to the same modules)
     # at once.
     parser = argparse.ArgumentParser()

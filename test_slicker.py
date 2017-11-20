@@ -648,6 +648,11 @@ class LocalNamesFromLocalNamesTest(unittest.TestCase):
             {('foo', 'bar', ('foo', 'bar', 26, 43))})
 
 
+class REForNameTest(unittest.TestCase):
+    # TODO(csilvers): write some tests here!
+    pass
+
+
 class DottedPrefixTest(unittest.TestCase):
     def test_dotted_starts_with(self):
         self.assertTrue(slicker._dotted_starts_with('abc', 'abc'))
@@ -945,6 +950,18 @@ class FixUsesTest(TestBase):
         self.run_test(
             'comments_top_level',
             'foo', 'quux.mod', import_alias='al')
+
+    def test_comments_simple_word(self):
+        self.create_module('exercise')
+        self.run_test(
+            'comments_simple_word',
+            'exercise', 'quux.mod')
+
+    def test_comments_simple_word_as(self):
+        self.create_module('foo.bar')
+        self.run_test(
+            'comments_simple_word_as',
+            'foo.bar', 'quux.mod')
 
     def test_source_file(self):
         """Test fixing up uses in the source of the move itself.
