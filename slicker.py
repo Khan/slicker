@@ -779,7 +779,15 @@ def _replace_in_file(file_info, old_fullname, old_localnames,
             _re_for_path(util.filename_for_module_name(old_fullname)),
             util.filename_for_module_name(new_fullname)))
     for localname in old_localnames - {new_localname, old_fullname}:
-        regexes_to_check.append((_re_for_name(localname), new_localname))
+        # For code like `from flags import flags`, old_fullname can be
+        # something like `flags.flags` and localname something like
+        # `flags`.  In this case the localname is ambiguous (is it
+        # the package "flags" or the module "flags"?), and it's
+        # safer to just not replace it in strings or comments.
+        # Hopefully people writing strings or comments will have
+        # used the fully qualified name anyway to avoid ambiguity.
+        if not old_fullname.endswith('.' + localname):
+            regexes_to_check.append((_re_for_name(localname), new_localname))
 
     # Strings
     for node in ast.walk(node_to_fix):

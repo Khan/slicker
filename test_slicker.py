@@ -990,6 +990,12 @@ class FixUsesTest(TestBase):
             'unicode',
             'foo.some_function', 'bar.new_name')
 
+    def test_repeated_name(self):
+        self.create_module('foo.foo')
+        self.run_test(
+            'repeated_name',
+            'foo.foo', 'bar.foo.foo')
+
 
 class FixMovedRegionSuggestorTest(TestBase):
     def test_rename_references_self(self):
