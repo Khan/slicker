@@ -76,7 +76,25 @@ WarningInfo = collections.namedtuple('WarningInfo',
                                      ['filename', 'pos', 'message'])
 
 
-class Patch(_Patch):
+class Patch(object):
+    def __init__(self, filename, old, new, start, end, file_permissions=None):
+        """An object representing a change to make to a filename.
+
+        Arguments:
+            filename: the filename to modify, relative to project-root.
+            old: the contents to remove (should be filename_body[start:end])
+            new: the contents to replace `old` with
+            start: (unicode) character offset for the old text
+            end:  (unicode) character offset for the old text
+            file_permissions: if set, change the file-mode of filename to this
+        """
+        self.filename = filename
+        self.old = old
+        self.new = new
+        self.start = start
+        self.end = end
+        self.permissions = file_permissions
+
     def apply_to(self, body):
         if body[self.start:self.end] != (self.old or ''):
             raise FatalError(self.filename, self.start,
@@ -271,11 +289,13 @@ class Frontend(object):
         """Accept a fatal error, and tell the user we'll skip this file."""
         raise NotImplementedError("Subclasses must override.")
 
-    def write_file(self, root, filename, text):
+    def write_file(self, root, filename, text, file_permissions=None):
         """filename is taken to be relative to root.
 
         Note you need a Frontend to write files (so we can update the
         list of modified files), but not to read them.
+
+        If file_permissions is not None, set the perms of filename.
         """
         abspath = os.path.abspath(os.path.join(root, filename))
         if text is None:    # it means we want to delete filename
@@ -299,6 +319,8 @@ class Frontend(object):
             with open(abspath, 'w') as f:
                 f.write(unicode_util.encode(filename, text))
                 self._modified_files.add((root, filename))
+            if file_permissions:
+                os.chmod(abspath, file_permissions)
 
     def progress_bar(self, paths):
         """Return the passed iterable of paths, and perhaps update progress.
@@ -393,11 +415,14 @@ class AcceptingFrontend(Frontend):
         # We operate in reverse order to avoid having to keep track of changing
         # offsets.
         new_body = body or ''
+        new_file_perms = None
         for patch in reversed(patches):
             assert filename == patch.filename, patch
             new_body = patch.apply_to(new_body)
+            # The last-specified permission (due to reversed()) wins.
+            new_file_perms = new_file_perms or patch.permissions
         if body != new_body:
-            self.write_file(root, filename, new_body)
+            self.write_file(root, filename, new_body, new_file_perms)
 
     def handle_warnings(self, root, filename, warnings):
         body = read_file(root, filename) or ''

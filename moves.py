@@ -3,6 +3,7 @@ from __future__ import absolute_import
 
 import ast
 import os
+import stat
 
 import khodemod
 import util
@@ -44,8 +45,15 @@ def move_module_suggestor(project_root, old_fullname, new_fullname):
         assert (not os.path.exists(new_pathname) or
                 os.stat(new_pathname).st_size == 0), new_pathname
 
+        # Make sure new_filename has the same permissions as the old.
+        # This is most important to keep the executable bit.
+        # TODO(csilvers): don't have low-level file ops here.
+        # TODO(csilvers): also change uid/gid?
+        file_permissions = stat.S_IMODE(os.stat(old_pathname).st_mode)
+
         yield khodemod.Patch(filename, body, None, 0, len(body))
-        yield khodemod.Patch(new_filename, None, body, 0, 0)
+        yield khodemod.Patch(new_filename, None, body, 0, 0,
+                             file_permissions=file_permissions)
 
         for patch in _add_init_py(new_filename):
             yield patch

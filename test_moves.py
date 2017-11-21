@@ -1,5 +1,8 @@
 from __future__ import absolute_import
 
+import os
+import stat
+
 import slicker
 import test_slicker
 
@@ -122,6 +125,14 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
                           ('from baz import faa\nfrom baz import foo\n\n'
                            'foo.myfunc()\nfaa.myfaa()\n'))
         self.assertFalse(self.error_output)
+
+    def test_keep_permissions(self):
+        self.write_file('foo.py', 'def myfunc(): return 4\n')
+        os.chmod(self.join('foo.py'), 0o755)
+        slicker.make_fixes(['foo'], 'baz',
+                           project_root=self.tmpdir)
+        self.assertEqual(
+            0o755, stat.S_IMODE(os.stat(self.join('baz.py')).st_mode))
 
 
 class SymbolMoveSuggestorTest(test_slicker.TestBase):
