@@ -422,9 +422,11 @@ def _localnames_from_localnames(file_info, localnames, imports=None):
         # If the name is a specific symbol defined in the file on which we are
         # operating, we also treat the unqualified reference as a localname,
         # with null import.
-        if localname in toplevel_names:
-            yield LocalName('%s.%s' % (current_module_name, localname),
-                            localname, None)
+        for toplevel_name in toplevel_names:
+            if _dotted_starts_with(localname, toplevel_name):
+                yield LocalName('%s.%s' % (current_module_name, toplevel_name),
+                                toplevel_name, None)
+                break
 
 
 def _name_for_node(node):

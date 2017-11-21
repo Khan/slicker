@@ -1109,6 +1109,26 @@ class FixMovedRegionSuggestorTest(TestBase):
                            '    return foo.f(foo.const)\n'))
         self.assertFalse(self.error_output)
 
+    def test_uses_old_module_for_class_vars(self):
+        self.write_file('foo.py',
+                        ('const = 1\n\n\n'
+                         'class C(object):\n'
+                         '    VAR = 1\n\n\n'
+                         'def myfunc():\n'
+                         '    return C.VAR + 1\n'))
+        slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
+                           project_root=self.tmpdir)
+        self.assertFileIs('foo.py',
+                          ('const = 1\n\n\n'
+                           'class C(object):\n'
+                           '    VAR = 1\n'))
+        self.assertFileIs('newfoo.py',
+                          ('from __future__ import absolute_import\n\n'
+                           'import foo\n\n\n'
+                           'def myfunc():\n'
+                           '    return foo.C.VAR + 1\n'))
+        self.assertFalse(self.error_output)
+
     def test_uses_old_module_already_imported(self):
         self.write_file('foo.py',
                         ('from __future__ import absolute_import\n\n'
