@@ -804,14 +804,14 @@ def _replace_in_file(file_info, old_fullname, old_localnames,
             _re_for_path(util.filename_for_module_name(old_fullname)),
             util.filename_for_module_name(new_fullname)))
     for localname in old_localnames - {new_localname, old_fullname}:
-        # For code like `from flags import flags`, old_fullname can be
-        # something like `flags.flags` and localname something like
-        # `flags`.  In this case the localname is ambiguous (is it
-        # the package "flags" or the module "flags"?), and it's
-        # safer to just not replace it in strings or comments.
-        # Hopefully people writing strings or comments will have
-        # used the fully qualified name anyway to avoid ambiguity.
-        if not old_fullname.endswith('.' + localname):
+        # For code like `from flags import flags`, If we see text like
+        # `mock('flags.flags.myfunc')`, it's ambiguous: does this mean
+        # flags.flags.myfunc or flags.flags.flags.myfunc?  Both are
+        # possible in this weird "package and module share a name"
+        # scenario.  Obviously, the first one is the proper
+        # interpretation, so we only want the regexp matching
+        # flags.flags, not plain 'flags', in this case.
+        if not _dotted_starts_with(old_fullname, localname):
             regexes_to_check.append((_re_for_name(localname), new_localname))
 
     # Strings

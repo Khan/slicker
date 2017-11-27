@@ -733,7 +733,11 @@ class ReplaceInStringTest(TestBase):
         """
         self.write_file(old_module.replace('.', os.sep) + '.py', '# A file')
 
-        if alias:
+        if alias and alias == old_module.rstrip('.')[-1]:
+            import_line = ('from %s import %s'
+                           % tuple(old_module.rstrip('.', 1)))
+            import_use = '_ = %s.myfunc()' % alias
+        elif alias:
             import_line = 'import %s as %s' % (old_module, alias)
             import_use = '_ = %s.myfunc()' % alias
         else:
@@ -744,6 +748,7 @@ class ReplaceInStringTest(TestBase):
 
         slicker.make_fixes([old_module], new_module,
                            project_root=self.tmpdir, automove=False)
+        self.assertFalse(self.error_output)
 
         expected = ('"""%s"""\nimport %s\n\n_ = %s.myfunc()\n'
                     % (new_string, new_module, new_module))
@@ -765,17 +770,49 @@ class ReplaceInStringTest(TestBase):
                       "not-renaming content_exercise or exercise_util but "
                       "does rename `foo.bar`."))
 
-    def test_word_via_alias(self):
+    def test_word_via_as(self):
         self.assert_('qux', 'foo.bar',
                      ("I will exercise `exercise.myfunc()` in exercise.py. "
                       "It will not rename 'exercise' and exercises "
                       "not-renaming content_exercise or exercise_util but "
-                      "does rename `exercise`."),
+                      "does rename `exercise`. And what about "
+                      "qux.myfunc()?  Or just 'qux'? `qux`?"),
                      ("I will exercise `foo.bar.myfunc()` in exercise.py. "
                       "It will not rename 'exercise' and exercises "
                       "not-renaming content_exercise or exercise_util but "
-                      "does rename `foo.bar`."),
-                     alias='exercise')   # file reads 'import qux as exercise'
+                      "does rename `foo.bar`. And what about "
+                      "foo.bar.myfunc()?  Or just 'qux'? `foo.bar`?"),
+                     alias='exercise')  # file reads 'import qux as exercise'
+
+    def test_word_via_from(self):
+        self.assert_('qux.exercise', 'foo.bar',
+                     ("I will exercise `exercise.myfunc()` in exercise.py. "
+                      "It will not rename 'exercise' and exercises "
+                      "not-renaming content_exercise or exercise_util but "
+                      "does rename `exercise`. And what about "
+                      "qux.exercise.myfunc()? Or just 'qux.exercise'? "
+                      "`qux.exercise`?"),
+                     ("I will exercise `foo.bar.myfunc()` in exercise.py. "
+                      "It will not rename 'exercise' and exercises "
+                      "not-renaming content_exercise or exercise_util but "
+                      "does rename `foo.bar`. And what about "
+                      "foo.bar.myfunc()? Or just 'foo.bar'? "
+                      "`foo.bar`?"),
+                     alias='exercise')  # file reads 'from qux import exercise'
+
+    def test_module_and_alias_the_same(self):
+        self.assert_('exercise.exercise', 'foo.bar',
+                     ("I will exercise `exercise.myfunc()` in exercise.py. "
+                      "It will not rename 'exercise' and exercises "
+                      "not-renaming content_exercise or exercise_util or "
+                      "`exercise`. But what about exercise.exercise.myfunc()?"
+                      "Or just 'exercise.exercise'? `exercise.exercise`?"),
+                     ("I will exercise `exercise.myfunc()` in exercise.py. "
+                      "It will not rename 'exercise' and exercises "
+                      "not-renaming content_exercise or exercise_util or "
+                      "`exercise`. But what about foo.bar.myfunc()?"
+                      "Or just 'foo.bar'? `foo.bar`?"),
+                     alias='exercise')  # 'from exercise import exercise'
 
     def test_does_not_rename_files_in_other_dirs(self):
         self.assert_('exercise', 'foo.bar',
@@ -784,6 +821,16 @@ class ReplaceInStringTest(TestBase):
     def test_does_not_rename_html_files(self):
         self.assert_('exercise', 'foo.bar',
                      "otherdir/exercise.html", "otherdir/exercise.html")
+
+    def test_renames_complex_strings_but_not_simple_ones(self):
+        self.assert_('exercise', 'foo.bar',
+                     "I like 'exercise'", "I like 'exercise'")
+        self.assert_('exercise_util', 'foo.bar',
+                     "I like 'exercise_util'", "I like 'foo.bar'")
+
+    def test_renames_simple_strings_when_it_is_the_whole_string(self):
+        self.assert_('exercise', 'foo.bar',
+                     "exercise", "foo.bar")
 
 
 
