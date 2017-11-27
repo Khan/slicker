@@ -732,19 +732,10 @@ class ReplaceInStringTest(TestBase):
         only has the import renamed, it has the string renamed as well.
         """
         self.write_file(old_module.replace('.', os.sep) + '.py', '# A file')
-
-        if alias and alias == old_module.rstrip('.')[-1]:
-            import_line = ('from %s import %s'
-                           % tuple(old_module.rstrip('.', 1)))
-            import_use = '_ = %s.myfunc()' % alias
-        elif alias:
-            import_line = 'import %s as %s' % (old_module, alias)
-            import_use = '_ = %s.myfunc()' % alias
-        else:
-            import_line = 'import %s' % old_module
-            import_use = '_ = %s.myfunc()' % old_module
-        self.write_file('in.py', '"""%s"""\n%s\n\n%s\n'
-                        % (old_string, import_line, import_use))
+        self.write_file('in.py', '"""%s"""\n%s\n\n_ = %s.myfunc()\n'
+                        % (old_string,
+                           slicker._new_import_stmt(old_module, alias),
+                           alias or old_module))
 
         slicker.make_fixes([old_module], new_module,
                            project_root=self.tmpdir, automove=False)
