@@ -648,11 +648,6 @@ class LocalNamesFromLocalNamesTest(unittest.TestCase):
             {('foo', 'bar', ('foo', 'bar', 26, 43))})
 
 
-class REForNameTest(unittest.TestCase):
-    # TODO(csilvers): write some tests here!
-    pass
-
-
 class DottedPrefixTest(unittest.TestCase):
     def test_dotted_starts_with(self):
         self.assertTrue(slicker._dotted_starts_with('abc', 'abc'))
@@ -726,6 +721,72 @@ class NamesStartingWithTest(unittest.TestCase):
             {'a.b', 'a.c', 'a.d', 'a.e', 'a.f', 'a.g'})
 
 
+class ReplaceInStringTest(TestBase):
+    def assert_(self, old_module, new_module, old_string, new_string,
+                alias=None):
+        """Assert that a file that imports old_module rewrites its strings too.
+
+        We create a temp file that imports old_module as alias, and then
+        defines a docstring with the contents old_string.  We then rename
+        old_module to new_module, and make sure that our temp file not
+        only has the import renamed, it has the string renamed as well.
+        """
+        self.write_file(old_module.replace('.', os.sep) + '.py', '# A file')
+
+        if alias:
+            import_line = 'import %s as %s' % (old_module, alias)
+            import_use = '_ = %s.myfunc()' % alias
+        else:
+            import_line = 'import %s' % old_module
+            import_use = '_ = %s.myfunc()' % old_module
+        self.write_file('in.py', '"""%s"""\n%s\n\n%s\n'
+                        % (old_string, import_line, import_use))
+
+        slicker.make_fixes([old_module], new_module,
+                           project_root=self.tmpdir, automove=False)
+
+        expected = ('"""%s"""\nimport %s\n\n_ = %s.myfunc()\n'
+                    % (new_string, new_module, new_module))
+        with open(self.join('in.py')) as f:
+            actual = f.read()
+        self.assertMultiLineEqual(expected, actual)
+
+    def test_simple(self):
+        self.assert_('foo', 'bar.baz', "foo.myfunc", "bar.baz.myfunc")
+
+    def test_word(self):
+        self.assert_('exercise', 'foo.bar',
+                     ("I will exercise `exercise.myfunc()` in exercise.py. "
+                      "It will not rename 'exercise' and exercises "
+                      "not-renaming content_exercise or exercise_util but "
+                      "does rename `exercise`."),
+                     ("I will exercise `foo.bar.myfunc()` in foo/bar.py. "
+                      "It will not rename 'exercise' and exercises "
+                      "not-renaming content_exercise or exercise_util but "
+                      "does rename `foo.bar`."))
+
+    def test_word_via_alias(self):
+        self.assert_('qux', 'foo.bar',
+                     ("I will exercise `exercise.myfunc()` in exercise.py. "
+                      "It will not rename 'exercise' and exercises "
+                      "not-renaming content_exercise or exercise_util but "
+                      "does rename `exercise`."),
+                     ("I will exercise `foo.bar.myfunc()` in exercise.py. "
+                      "It will not rename 'exercise' and exercises "
+                      "not-renaming content_exercise or exercise_util but "
+                      "does rename `foo.bar`."),
+                     alias='exercise')   # file reads 'import qux as exercise'
+
+    def test_does_not_rename_files_in_other_dirs(self):
+        self.assert_('exercise', 'foo.bar',
+                     "otherdir/exercise.py", "otherdir/exercise.py")
+
+    def test_does_not_rename_html_files(self):
+        self.assert_('exercise', 'foo.bar',
+                     "otherdir/exercise.html", "otherdir/exercise.html")
+
+
+
 class RootTest(TestBase):
     def test_root(self):
         self.copy_file('simple_in.py')
@@ -777,11 +838,7 @@ class FixUsesTest(TestBase):
             self.assertItemsEqual([expected_error], self.error_output)
 
     def create_module(self, module_name):
-        abspath = self.join(module_name.replace('.', os.sep) + '.py')
-        if not os.path.exists(os.path.dirname(abspath)):
-            os.makedirs(os.path.dirname(abspath))
-        with open(abspath, 'w') as f:
-            print >>f, "# A file"
+        self.write_file(module_name.replace('.', os.sep) + '.py', '# A file')
 
     def test_simple(self):
         self.create_module('foo')
@@ -950,18 +1007,6 @@ class FixUsesTest(TestBase):
         self.run_test(
             'comments_top_level',
             'foo', 'quux.mod', import_alias='al')
-
-    def test_comments_simple_word(self):
-        self.create_module('exercise')
-        self.run_test(
-            'comments_simple_word',
-            'exercise', 'quux.mod')
-
-    def test_comments_simple_word_as(self):
-        self.create_module('foo.bar')
-        self.run_test(
-            'comments_simple_word_as',
-            'foo.bar', 'quux.mod')
 
     def test_source_file(self):
         """Test fixing up uses in the source of the move itself.

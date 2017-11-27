@@ -88,13 +88,20 @@ import moves
 import util
 
 
+_FILENAME_EXTENSIONS = ('.py', '.js', '.jsx', '.png', '.jpg', '.svg', '.html',
+                        '.less', '.handlebars', '.json', '.txt', '.css')
+_FILENAME_EXTENSIONS_RE_STRING = '|'.join(re.escape(e)
+                                          for e in _FILENAME_EXTENSIONS)
+
+
 def _re_for_name(name):
     """Find a dotted-name (a.b.c) given that Python allows whitespace.
 
     This is actually pretty tricky.  Here are some issues:
     1) We don't want a name `a.b.c` to match `d.a.b.c`.
     2) We don't want a name `foo` to match `foo.py` -- that's a filename,
-       not a module-name (and is handled separately).
+       not a module-name (and is handled separately).  We also don't
+       want it to match other common filename extensions.
     3) We don't want a name `browser` to match text like
        "# Open a new browser window"
 
@@ -111,9 +118,9 @@ def _re_for_name(name):
     name_with_spaces = re.escape(name).replace(r'\.', r'\s*\.\s*')
     if not name.strip(string.ascii_letters):
         # Name is entirely alphabetic.
-        return re.compile(r'(?<!\.)\b%s(?=\.)(?!\.py)|^%s$|(?<=`)%s(?=`)'
-                          % (name_with_spaces, name_with_spaces,
-                             name_with_spaces))
+        return re.compile(r'(?<!\.)\b%s(?=\.)(?!%s)|^%s$|(?<=`)%s(?=`)'
+                          % (name_with_spaces, _FILENAME_EXTENSIONS_RE_STRING,
+                             name_with_spaces, name_with_spaces))
     else:
         return re.compile(r'(?<!\.)\b%s\b(?!\.py)' % name_with_spaces)
 
