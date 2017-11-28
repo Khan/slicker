@@ -810,8 +810,12 @@ class ReplaceInStringTest(TestBase):
                      "otherdir/exercise.py", "otherdir/exercise.py")
 
     def test_does_not_rename_html_files(self):
+        # Regular-english-word case.
         self.assert_('exercise', 'foo.bar',
                      "otherdir/exercise.html", "otherdir/exercise.html")
+        # Obviously-a-symbol case.
+        self.assert_('exercise_util', 'foo.bar',
+                     "dir/exercise_util.html", "dir/exercise_util.html")
 
     def test_renames_complex_strings_but_not_simple_ones(self):
         self.assert_('exercise', 'foo.bar',
@@ -823,6 +827,15 @@ class ReplaceInStringTest(TestBase):
         self.assert_('exercise', 'foo.bar',
                      "exercise", "foo.bar")
 
+    def test_word_at_the_end_of_a_sentence(self):
+        # Regular-english-word case.
+        self.assert_('exercise', 'foo.bar',
+                     "I need some exercise.  Yes, exercise.",
+                     "I need some exercise.  Yes, exercise.")
+        # Obviously-a-symbol case.
+        self.assert_('exercise_util', 'foo.bar',
+                     "I need to look at exercise_util.  Yes, exercise_util.",
+                     "I need to look at foo.bar.  Yes, foo.bar.")
 
 
 class RootTest(TestBase):

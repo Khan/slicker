@@ -118,11 +118,12 @@ def _re_for_name(name):
     name_with_spaces = re.escape(name).replace(r'\.', r'\s*\.\s*')
     if not name.strip(string.ascii_letters):
         # Name is entirely alphabetic.
-        return re.compile(r'(?<!\.)\b%s(?=\.)(?!%s)|^%s$|(?<=`)%s(?=`)'
+        return re.compile(r'(?<!\.)\b%s(?=\.\w)(?!%s)|^%s$|(?<=`)%s(?=`)'
                           % (name_with_spaces, _FILENAME_EXTENSIONS_RE_STRING,
                              name_with_spaces, name_with_spaces))
     else:
-        return re.compile(r'(?<!\.)\b%s\b(?!\.py)' % name_with_spaces)
+        return re.compile(r'(?<!\.)\b%s\b(?!%s)'
+                          % (name_with_spaces, _FILENAME_EXTENSIONS_RE_STRING))
 
 
 def _re_for_path(path):
