@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 
+import os
 import unittest
 
 import inputs
@@ -146,6 +147,26 @@ class OneInputTest(test_slicker.TestBase):
         error = ("Cannot move symbol 'foo.myfunc' to 'bar': "
                  "'bar' already defines a symbol named 'myfunc'.")
         self.assert_fails('foo.myfunc', 'bar', error)
+
+    def test_symlink_for_file(self):
+        self.write_file('bar.py', 'def myfunc(): return 4\n')
+        os.symlink('bar.py', self.join('sym.py'))
+        error = 'Cannot move sym: %s is a symlink' % self.join('sym.py')
+        self.assert_fails('sym', 'newdir', error)
+
+    def test_symlink_for_symbol(self):
+        self.write_file('bar.py', 'def myfunc(): return 4\n')
+        os.symlink('bar.py', self.join('sym.py'))
+        error = 'Cannot move sym.myfunc: %s is a symlink' % self.join('sym.py')
+        self.assert_fails('sym.myfunc', 'newdir', error)
+
+    def test_symlink_for_package(self):
+        self.write_file('dir_with_symlink/bar.py', 'def myfunc(): return 4\n')
+        self.write_file('dir_with_symlink/__init__.py', '')
+        os.symlink('bar.py', self.join('dir_with_symlink/sym.py'))
+        self._assert('dir_with_symlink', 'newdir',
+                     [('dir_with_symlink.bar', 'newdir.bar', False),
+                      ('dir_with_symlink.__init__', 'newdir.__init__', False)])
 
 
 class ManyInputsTest(test_slicker.TestBase):

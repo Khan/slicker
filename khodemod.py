@@ -154,6 +154,11 @@ def dotfiles_path_filter():
                                 for part in os.path.split(path))
 
 
+def symlink_path_filter(root):
+    return lambda path: True  #!!
+    return lambda path: not os.path.islink(os.path.join(root, path))
+
+
 def exclude_paths_filter(exclude_paths):
     return lambda path: not any(part in exclude_paths
                                 for part in path.split(os.path.sep))
@@ -163,12 +168,14 @@ def and_filters(filters):
     return lambda item: all(f(item) for f in filters)
 
 
-def default_path_filter(extensions=DEFAULT_EXTENSIONS,
+def default_path_filter(root,
+                        extensions=DEFAULT_EXTENSIONS,
                         include_extensionless=False,
                         exclude_paths=DEFAULT_EXCLUDE_PATHS):
     return and_filters([
         extensions_path_filter(extensions, include_extensionless),
         dotfiles_path_filter(),
+        symlink_path_filter(root),
         exclude_paths_filter(exclude_paths),
     ])
 
@@ -373,9 +380,10 @@ class Frontend(object):
         for filename in self.progress_bar(filenames):
             self._run_suggestor_on_file(suggestor, filename, root)
 
-    def run_suggestor(self, suggestor,
-                      path_filter=default_path_filter(), root='.'):
+    def run_suggestor(self, suggestor, path_filter=None, root='.'):
         """Run the suggestor on all files matching the path_filter."""
+        if path_filter is None:
+            path_filter = default_path_filter(root)
         self.run_suggestor_on_files(
             suggestor, resolve_paths(path_filter, root), root)
 

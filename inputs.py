@@ -30,15 +30,17 @@ import util
 
 
 def _expand_and_normalize_one(project_root, old_fullname, new_fullname,
-                              path_filter=khodemod.default_path_filter()):
+                              path_filter=None):
     """See expand_and_normalize.__doc__."""
     def filename_for(mod):
         return os.path.join(project_root, util.filename_for_module_name(mod))
 
-    def _assert_exists(module, error_prefix):
-        if not os.path.exists(filename_for(module)):
-            raise ValueError("%s: %s not found"
-                             % (error_prefix, filename_for(module)))
+    def _assert_exists_as_file(module, error_prefix):
+        fname = filename_for(module)
+        if not os.path.exists(fname):
+            raise ValueError("%s: %s not found" % (error_prefix, fname))
+        if os.path.islink(fname):
+            raise ValueError("%s: %s is a symlink" % (error_prefix, fname))
 
     def _normalize_fullname_and_get_type(fullname):
         # Check the cases that fullname is a file or a directory.
@@ -70,7 +72,11 @@ def _expand_and_normalize_one(project_root, old_fullname, new_fullname,
     def _modules_under(package_name):
         """Yield module-names relative to package_name-root."""
         package_dir = os.path.dirname(filename_for(package_name + '.__init__'))
-        for path in khodemod.resolve_paths(path_filter, root=package_dir):
+        if path_filter is None:
+            this_path_filter = khodemod.default_path_filter(package_dir)
+        else:
+            this_path_filter = path_filter
+        for path in khodemod.resolve_paths(this_path_filter, root=package_dir):
             yield util.module_name_for_filename(path)
 
     (old_fullname, old_type) = _normalize_fullname_and_get_type(old_fullname)
@@ -85,7 +91,7 @@ def _expand_and_normalize_one(project_root, old_fullname, new_fullname,
 
     if old_type == "symbol":
         (module, symbol) = old_fullname.rsplit('.', 1)
-        _assert_exists(module, "Cannot move %s" % old_fullname)
+        _assert_exists_as_file(module, "Cannot move %s" % old_fullname)
 
         # TODO(csilvers): check that the 2nd element of the return-value
         # doesn't refer to a symbol that already exists.
@@ -107,7 +113,7 @@ def _expand_and_normalize_one(project_root, old_fullname, new_fullname,
                 yield (old_fullname, '%s.%s' % (new_fullname, symbol), True)
 
     elif old_type == "module":
-        _assert_exists(old_fullname, "Cannot move %s" % old_fullname)
+        _assert_exists_as_file(old_fullname, "Cannot move %s" % old_fullname)
         if new_type == "symbol":
             raise ValueError("Cannot move a module '%s' to a symbol (%s)"
                              % (old_fullname, new_fullname))
@@ -129,8 +135,8 @@ def _expand_and_normalize_one(project_root, old_fullname, new_fullname,
             yield (old_fullname, new_fullname, False)
 
     elif old_type == "package":
-        _assert_exists(old_fullname + '.__init__',
-                       "Cannot move %s" % old_fullname)
+        _assert_exists_as_file(old_fullname + '.__init__',
+                               "Cannot move %s" % old_fullname)
         if new_type in ("symbol", "module"):
             raise ValueError("Cannot move a package '%s' into a %s (%s)"
                              % (old_fullname, new_type, new_fullname))
@@ -162,7 +168,7 @@ def _expand_and_normalize_one(project_root, old_fullname, new_fullname,
 
 
 def expand_and_normalize(project_root, old_fullnames, new_fullname,
-                         path_filter=khodemod.default_path_filter()):
+                         path_filter=None):
     """Return a list of old-new-info triples that effect the requested rename.
 
     In the simple case old_fullname is a module and new_fullname is a
