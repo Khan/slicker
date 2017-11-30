@@ -1540,7 +1540,7 @@ def make_fixes(old_fullnames, new_fullname, import_alias=None, use_from=None,
         if import_alias:
             our_import_alias = import_alias
         elif use_from:
-            our_import_alias = newname.rsplit('.', 1)[-1]
+            our_import_alias = name_to_import.rsplit('.', 1)[-1]
         else:
             our_import_alias = None
 
