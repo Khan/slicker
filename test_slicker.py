@@ -857,7 +857,7 @@ class RootTest(TestBase):
 
 class FixUsesTest(TestBase):
     def run_test(self, filebase, old_fullname, new_fullname,
-                 import_alias=None, use_from=None,
+                 import_alias=None,
                  expected_warnings=(), expected_error=None):
         if expected_error:
             expected = None
@@ -868,7 +868,7 @@ class FixUsesTest(TestBase):
         self.copy_file('%s_in.py' % filebase)
 
         slicker.make_fixes([old_fullname], new_fullname,
-                           import_alias, use_from, project_root=self.tmpdir,
+                           import_alias, project_root=self.tmpdir,
                            # Since we just create placeholder files for the
                            # moved symbol, we won't be able to find it,
                            # which introduces a spurious error.
@@ -1108,6 +1108,98 @@ class FixUsesTest(TestBase):
         self.run_test(
             'repeated_name',
             'foo.foo', 'bar.foo.foo')
+
+
+class AliasTest(TestBase):
+    def assert_(self, old_module, new_module, alias,
+                old_import_line, new_import_line,
+                old_extra_text='', new_extra_text=''):
+        """Assert that we rewrite imports the way we ought, with aliases."""
+        self.write_file(old_module.replace('.', os.sep) + '.py', '# A file')
+
+        # The last word of the import-line is the local-name.
+        old_localname = old_import_line.split(' ')[-1]
+        new_localname = new_import_line.split(' ')[-1]
+        self.write_file('in.py',
+                        '%s\n\nX = %s.X\n%s\n'
+                        % (old_import_line, old_localname, old_extra_text))
+
+        slicker.make_fixes([old_module], new_module, import_alias=alias,
+                           project_root=self.tmpdir, automove=False)
+        self.assertFalse(self.error_output)
+
+        expected = ('%s\n\nX = %s.X\n%s\n'
+                    % (new_import_line, new_localname, new_extra_text))
+        with open(self.join('in.py')) as f:
+            actual = f.read()
+        self.assertMultiLineEqual(expected, actual)
+
+    def test_auto(self):
+        self.assert_(
+            'foo.bar', 'baz.bang', 'AUTO',
+            'import foo.bar', 'import baz.bang')
+        self.assert_(
+            'foo.bar', 'baz.bang', 'AUTO',
+            'from foo import bar', 'from baz import bang')
+        self.assert_(
+            'foo.bar', 'baz.bang', 'AUTO',
+            'import foo.bar as qux', 'import baz.bang as qux')
+        # We treat this as a from-import even though the syntax differs.
+        self.assert_(
+            'foo.bar', 'baz.bang', 'AUTO',
+            'import foo.bar as bar', 'from baz import bang')
+
+    def test_auto_with_other_imports(self):
+        self.assert_(
+            'foo.bar', 'baz.bang', 'AUTO',
+            'from foo import bar', 'from baz import bang',
+            old_extra_text='import other.ok\n',
+            new_extra_text='import other.ok\n')
+
+    def test_auto_with_multiple_imports(self):
+        self.assert_(
+            'foo.bar', 'baz.bang', 'AUTO',
+            'from foo import bar', 'from baz import bang',
+            old_extra_text='def foo():\n  from foo import bar',
+            new_extra_text='def foo():\n  from baz import bang')
+
+    def test_auto_with_conflicting_imports(self):
+        self.assert_(
+            'foo.bar', 'baz.bang', 'AUTO',
+            'from foo import bar', 'import baz.bang',
+            old_extra_text='def foo():\n  import foo.bar',
+            new_extra_text='def foo():\n  import baz.bang')
+
+    def test_auto_for_toplevel_import(self):
+        self.assert_(
+            'foo.bar', 'baz', 'AUTO',
+            'import foo.bar', 'import baz')
+
+    def test_from(self):
+        self.assert_(
+            'foo.bar', 'baz.bang', 'FROM',
+            'import foo.bar', 'from baz import bang')
+        self.assert_(
+            'foo.bar', 'baz.bang', 'FROM',
+            'from foo import bar', 'from baz import bang')
+        self.assert_(
+            'foo.bar', 'baz.bang', 'FROM',
+            'import foo.bar as qux', 'from baz import bang')
+
+    def test_none(self):
+        self.assert_(
+            'foo.bar', 'baz.bang', 'NONE',
+            'import foo.bar', 'import baz.bang')
+        self.assert_(
+            'foo.bar', 'baz.bang', 'NONE',
+            'from foo import bar', 'import baz.bang')
+        self.assert_(
+            'foo.bar', 'baz.bang', 'NONE',
+            'import foo.bar as qux', 'import baz.bang')
+        self.assert_(
+            'foo.bar', 'baz.bang', None,
+            'import foo.bar', 'import baz.bang')
+
 
 
 class FixMovedRegionSuggestorTest(TestBase):
