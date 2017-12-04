@@ -199,6 +199,16 @@ class Import(object):
     def __repr__(self):
         return "Import(name=%r, alias=%r)" % (self.name, self.alias)
 
+    def __hash__(self):
+        # self._span is computed from the other properties so we exclude it.
+        return hash((self.name, self.alias, self.node, self._file_info))
+
+    def __eq__(self, other):
+        # self._span is computed from the other properties so we exclude it.
+        return (isinstance(other, Import) and self.name == other.name
+                and self.alias == other.alias and self.node == other.node
+                and self._file_info == other._file_info)
+
 
 # LocalName: how a particular name (symbol or module) is referenced
 #            in the current file.
@@ -323,7 +333,7 @@ def _localnames_from_fullnames(file_info, fullnames, imports=None):
                 for imp in imports_by_name[fullname_prefix]:
                     yield LocalName(fullname,
                                     imp.alias + fullname[len(imp.name):], imp)
-                    if imp.alias != imp.name:
+                    if imp.alias == imp.name:
                         found_explicit_unaliased_import = True
 
         if not found_explicit_unaliased_import:
@@ -570,7 +580,6 @@ def _unused_imports(imports, old_fullname, file_info, within_node=None):
     # Decide whether to keep the old import if we changed references to it.
     unused_imports = set()
     implicitly_used_imports = set()
-    used_imports = set()
     for imp in imports:
         # This includes all names that we might be *implicitly*
         # accessing via this import (special case (1) of the
@@ -586,18 +595,34 @@ def _unused_imports(imports, old_fullname, file_info, within_node=None):
         if imp.name == old_fullname:
             unused_imports.add(imp)
         elif explicitly_referenced_names:
-            used_imports.add(imp)
+            pass  # import is used
         elif implicitly_used_names:
             implicitly_used_imports.add(imp)
         else:
             unused_imports.add(imp)
 
-    # Now, if there was an import we were considering removing but which might
-    # be used implicitly, and we are keeping a different import that gets us
-    # the same things, we can remove the former.
+    # Now, if there was an import (say 'import foo.baz') we were considering
+    # removing but which might be used implicitly, and we are keeping a
+    # different import (say 'import foo.bar') that gets us the same things, we
+    # can remove the former.
+    # We need to compute the full list of imports to do this, because we want
+    # to count even imports we weren't asked to look at -- if we were asked to
+    # look at 'import foo.baz', an unrelated 'foo.bar' counts too.
+    if within_node is file_info.tree:
+        # Additionally, if we are not looking at a particular node, we should
+        # only consider toplevel imports, since a late 'import foo.bar' doesn't
+        # necessarily mean we can remove a toplevel 'import foo.baz'.
+        # TODO(benkraft): We can remove the conditional by making
+        # _compute_all_imports support passing both within_node and
+        # toplevel_only.
+        all_imports = _compute_all_imports(file_info, toplevel_only=True)
+    else:
+        all_imports = _compute_all_imports(file_info, within_node=within_node)
+
+    kept_imports = all_imports - unused_imports - implicitly_used_imports
     for maybe_removable_imp in list(implicitly_used_imports):
         prefix = maybe_removable_imp.alias.split('.')[0]
-        for kept_imp in used_imports:
+        for kept_imp in kept_imports:
             if _dotted_starts_with(kept_imp.alias, prefix):
                 implicitly_used_imports.remove(maybe_removable_imp)
                 unused_imports.add(maybe_removable_imp)
