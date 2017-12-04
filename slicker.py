@@ -975,6 +975,57 @@ def _remove_import_patch(imp, file_info):
                               file_info.body[start:end], '', start, end)
 
 
+def _resolve_import_alias(import_alias, name_to_import, old_localnames):
+    """Determine the import alias to use for the import of a renamed symbol.
+
+    If you've renamed foo.bar.myfunc() to baz.bang.myfunc(), and you're
+    now editing somefile.py to change its call of foo.bar.myfunc() to
+    baz.bang.myfunc(), you're probably going to have to replace somefile's
+    `import foo.bar` with `import baz.bang`.  Or maybe you're replacing
+    somefile's `from foo import bar` with `from baz import bang`?  Or
+    `import foo.bar as foo_bar` with `import baz.bang as baz_bang`?  This
+    is the function that determines what alias to use for the new
+    (baz.bang) import.
+
+    In the easy case, import_alias tells us the alias to use for the new
+    import.  But usually import_alias will be a special value: FROM,
+    NONE, or AUTO.  In the FROM case, we return an alias that will turn
+    name_to_import into a from-import.  In the NONE case, we return an
+    alias that will leave name_to_import untouched.  In the AUTO case,
+    we'll keep the same form that the old import (`import foo.bar` or
+    `from bar import foo` or whatever`) had.  old_localnames is the
+    structure that lets us figure that out.
+    """
+    # If import_alias is AUTO, use old_localnames to figure out what
+    # kind of alias we actually want to use.
+    if import_alias == 'AUTO':
+        if not old_localnames:
+            # No existing import to go by, so we just default to full-import.
+            import_alias = 'NONE'
+        elif all(ln.imp.alias == ln.imp.name for ln in old_localnames):
+            # The old import is a regular, full import.
+            import_alias = 'NONE'
+        elif all(ln.imp.alias == ln.imp.name.rsplit('.', 1)[1]
+                 for ln in old_localnames):
+            # The old import is a from-import.
+            import_alias = 'FROM'
+        elif all(ln.imp.alias == old_localnames[0].imp.alias
+                 for ln in old_localnames):
+            # The old import is an as-import.
+            import_alias = old_localnames[0].imp.alias
+        else:
+            # The old imports are not all consistent, so we bail.
+            import_alias = None
+
+    # Now resolve the alias.
+    if import_alias in ('NONE', None):
+        return None
+    elif import_alias == 'FROM':
+        return name_to_import.rsplit('.', 1)[-1]
+    else:
+        return import_alias
+
+
 # TODO(benkraft): Once slicker can do it relatively easily, move the
 # use-fixing suggestors and helpers to their own file.
 def _fix_uses_suggestor(old_fullname, new_fullname,
@@ -997,8 +1048,12 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
             be a prefix of new_fullname).
         import_alias: what to call the import.  Logically, we will suggest
             adding "import name_to_import as import_alias" though we may
-            use "from" syntax if it amounts to the same thing.  If None,
-            we'll just use "import name_to_import".
+            use "from" syntax if it amounts to the same thing.  It can
+            also be a special value:
+               "FROM": always use from-syntax for every use we fix
+               "NONE" (or None): always use name_to_import
+               "AUTO": if the import we're fixing used `from` or `as`,
+                       we do too, otherwise we use name_to_import.
     """
     def suggestor(filename, body):
         """filename is relative to the value of --root."""
@@ -1026,8 +1081,13 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
             _localnames_from_fullnames(file_info, {old_fullname}))
         old_localname_strings = {ln.localname for ln in old_localnames}
 
+        # Figure out what alias to use for the new import.
+        import_alias_for_this_file = _resolve_import_alias(
+            import_alias, name_to_import, old_localnames)
+
         new_localname, need_new_import = _choose_best_localname(
-            file_info, new_fullname, name_to_import, import_alias)
+            file_info, new_fullname, name_to_import,
+            import_alias_for_this_file)
 
         # Now, patch references -- _replace_in_file does all the work.
         patches, used_localnames = _replace_in_file(
@@ -1039,15 +1099,17 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
         # Finally, add a new import, if necessary.
         if need_new_import and used_localnames:
             conflicting_imports = _check_import_conflicts(
-                file_info, old_fullname, import_alias or name_to_import,
-                bool(import_alias))
+                file_info, old_fullname,
+                import_alias_for_this_file or name_to_import,
+                bool(import_alias_for_this_file))
             if conflicting_imports:
                 raise khodemod.FatalError(
                     file_info.filename, conflicting_imports.pop().start,
                     "Your alias will conflict with imports in this file.")
 
             # Decide what the import will say.
-            import_stmt = _new_import_stmt(name_to_import, import_alias)
+            import_stmt = _new_import_stmt(name_to_import,
+                                           import_alias_for_this_file)
 
             old_imports = {ln.imp for ln in old_localnames
                            if ln.imp is not None}
@@ -1485,7 +1547,7 @@ def _import_sort_suggestor(project_root):
     return suggestor
 
 
-def make_fixes(old_fullnames, new_fullname, import_alias=None, use_from=None,
+def make_fixes(old_fullnames, new_fullname, import_alias=None,
                project_root='.', automove=True, verbose=False):
     """Do all the fixing necessary to move old_fullnames to new_fullname.
 
@@ -1562,15 +1624,8 @@ def make_fixes(old_fullnames, new_fullname, import_alias=None, use_from=None,
         else:
             name_to_import = newname
 
-        if import_alias:
-            our_import_alias = import_alias
-        elif use_from:
-            our_import_alias = name_to_import.rsplit('.', 1)[-1]
-        else:
-            our_import_alias = None
-
         fix_uses_suggestor = _fix_uses_suggestor(
-            oldname, newname, name_to_import, our_import_alias)
+            oldname, newname, name_to_import, import_alias)
         frontend.run_suggestor(fix_uses_suggestor, root=project_root)
 
         remove_imports_suggestor = _remove_imports_suggestor(oldname)
@@ -1608,14 +1663,18 @@ def main():
                         help=('Do not automatically move OLD_FULLNAME to '
                               'NEW_FULLNAME. Callers must do that before '
                               'running this script.'))
-    parser.add_argument('-a', '--alias',
+    parser.add_argument('-a', '--alias', default='AUTO',
                         help=('Alias to use when adding new import lines.  '
                               'This is the module-alias, even if you are '
-                              'moving a symbol.'))
+                              'moving a symbol.  Should be a python name '
+                              'or one of the special values: AUTO FROM NONE. '
+                              'AUTO says to use the same format as the import '
+                              'it is replacing (on a case-by-case basis). '
+                              'FROM says to always use a from-import. '
+                              'NONE says to always use the full import. '
+                              'Default is %(default)s'))
     parser.add_argument('-f', '--use-from', action='store_true',
-                        help=('Use from-imports for all moved symbols. '
-                              'The same as `-a basename(new_fullname)`,'
-                              'but more useful with multiple input files.'))
+                        help='Convenience flag for `-a FROM`')
     parser.add_argument('--root', default='.',
                         help=('The project-root of the directory-tree you '
                               'want to do the renaming in.  old_fullname, '
@@ -1629,10 +1688,14 @@ def main():
     else:
         old_fullnames = parsed_args.old_fullnames
 
+    if parsed_args.use_from:
+        alias = 'FROM'
+    else:
+        alias = parsed_args.alias or 'NONE'    # empty string is same as NONE
+
     make_fixes(
         old_fullnames, parsed_args.new_fullname,
-        import_alias=parsed_args.alias,
-        use_from=parsed_args.use_from,
+        import_alias=alias,
         project_root=parsed_args.root,
         automove=parsed_args.automove,
         verbose=parsed_args.verbose)

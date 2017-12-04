@@ -116,7 +116,8 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
         self.write_file('faa.py', 'def myfaa(): return 4\n')
         self.write_file('bar.py', ('import foo\nimport faa\n\n'
                                    'foo.myfunc()\nfaa.myfaa()\n'))
-        slicker.make_fixes(['foo', 'faa'], self.join('baz/'), use_from=True,
+        slicker.make_fixes(['foo', 'faa'], self.join('baz/'),
+                           import_alias='FROM',
                            project_root=self.tmpdir)
         self.assertFileIs('baz/foo.py', 'def myfunc(): return 4\n')
         self.assertFileIs('baz/faa.py', 'def myfaa(): return 4\n')
