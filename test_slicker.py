@@ -940,6 +940,12 @@ class FixUsesTest(TestBase):
                 'WARNING:This import may be used implicitly.\n'
                 '    on implicit_in.py:6 --> import foo.bar.baz'])
 
+    def test_implicit_and_alias(self):
+        self.create_module('foo.bar.baz')
+        self.run_test(
+            'implicit_and_alias',
+            'foo.bar.baz.some_function', 'quux.new_name')
+
     def test_double_implicit(self):
         self.create_module('foo.bar.baz')
         self.run_test(
@@ -1020,7 +1026,7 @@ class FixUsesTest(TestBase):
             'foo.bar.some_function', 'quux.some_function',
             expected_warnings=[
                 'WARNING:Not removing import with @Nolint.\n'
-                '    on unused_in.py:7 --> import foo.baz  # @UnusedImport'])
+                '    on unused_in.py:6 --> import foo.bar  # @UnusedImport'])
 
     def test_many_imports(self):
         self.create_module('foo.quux')
@@ -1032,6 +1038,12 @@ class FixUsesTest(TestBase):
         self.create_module('foo.bar')
         self.run_test(
             'late_import',
+            'foo.bar.some_function', 'quux.some_function')
+
+    def test_imported_twice(self):
+        self.create_module('foo.bar')
+        self.run_test(
+            'imported_twice',
             'foo.bar.some_function', 'quux.some_function')
 
     def test_mock(self):
