@@ -999,8 +999,9 @@ def _resolve_import_alias(import_alias, name_to_import, old_localnames):
     # If import_alias is AUTO, use old_localnames to figure out what
     # kind of alias we actually want to use.
     if import_alias == 'AUTO':
-        if not old_localnames:
-            # No existing import to go by, so we just default to full-import.
+        if not old_localnames or any(ln.imp is None for ln in old_localnames):
+            # No existing import to go by -- perhaps the symbol used to exist
+            # locally in this file -- so we just default to full-import.
             import_alias = 'NONE'
         elif all(ln.imp.alias == ln.imp.name for ln in old_localnames):
             # The old import is a regular, full import.

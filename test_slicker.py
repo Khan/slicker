@@ -1161,6 +1161,32 @@ class AliasTest(TestBase):
             'foo.bar', 'baz.bang', 'AUTO',
             'import foo.bar as bar', 'from baz import bang')
 
+    def test_auto_with_symbol_full_import(self):
+        self.write_file('foo/bar.py', 'myfunc = lambda: None\n')
+        self.write_file('in.py', 'import foo.bar\n\nfoo.bar.myfunc()\n')
+        slicker.make_fixes(['foo.bar.myfunc'], self.join('baz/bang.py'),
+                           import_alias='AUTO',
+                           project_root=self.tmpdir, automove=False)
+        self.assertFalse(self.error_output)
+
+        expected = 'import baz.bang\n\nbaz.bang.myfunc()\n'
+        with open(self.join('in.py')) as f:
+            actual = f.read()
+        self.assertMultiLineEqual(expected, actual)
+
+    def test_auto_with_symbol_from_import(self):
+        self.write_file('foo/bar.py', 'myfunc = lambda: None\n')
+        self.write_file('in.py', 'from foo import bar\n\nbar.myfunc()\n')
+        slicker.make_fixes(['foo.bar.myfunc'], self.join('baz/bang.py'),
+                           import_alias='AUTO',
+                           project_root=self.tmpdir, automove=False)
+        self.assertFalse(self.error_output)
+
+        expected = 'from baz import bang\n\nbang.myfunc()\n'
+        with open(self.join('in.py')) as f:
+            actual = f.read()
+        self.assertMultiLineEqual(expected, actual)
+
     def test_auto_with_other_imports(self):
         self.assert_(
             'foo.bar', 'baz.bang', 'AUTO',
