@@ -1174,6 +1174,9 @@ class AliasTest(TestBase):
         self.assert_(
             'foo.bar', 'baz', 'AUTO',
             'import foo.bar', 'import baz')
+        self.assert_(
+            'baz', 'foo.bang', 'AUTO',
+            'import baz', 'import foo.bang')
 
     def test_from(self):
         self.assert_(

@@ -952,6 +952,57 @@ def _remove_import_patch(imp, file_info):
                               file_info.body[start:end], '', start, end)
 
 
+def _resolve_import_alias(import_alias, name_to_import, old_localnames):
+    """Determine the import alias to use for the import of a renamed symbol.
+
+    If you've renamed foo.bar.myfunc() to baz.bang.myfunc(), and you're
+    now editing somefile.py to change its call of foo.bar.myfunc() to
+    baz.bang.myfunc(), you're probably going to have to replace somefile's
+    `import foo.bar` with `import baz.bang`.  Or maybe you're replacing
+    somefile's `from foo import bar` with `from baz import bang`?  Or
+    `import foo.bar as foo_bar` with `import baz.bang as baz_bang`?  This
+    is the function that determines what alias to use for the new
+    (baz.bang) import.
+
+    In the easy case, import_alias tells us the alias to use for the new
+    import.  But usually import_alias will be a special value: FROM,
+    NONE, or AUTO.  In the FROM case, we return an alias that will turn
+    name_to_import into a from-import.  In the NONE case, we return an
+    alias that will leave name_to_import untouched.  In the AUTO case,
+    we'll keep the same form that the old import (`import foo.bar` or
+    `from bar import foo` or whatever`) had.  old_localnames is the
+    structure that lets us figure that out.
+    """
+    # If import_alias is AUTO, use old_localnames to figure out what
+    # kind of alias we actually want to use.
+    if import_alias == 'AUTO':
+        if not old_localnames:
+            # No existing import to go by, so we just default to full-import.
+            import_alias = 'NONE'
+        elif all(ln.imp.alias == ln.imp.name for ln in old_localnames):
+            # The old import is a regular, full import.
+            import_alias = 'NONE'
+        elif all(ln.imp.alias == ln.imp.name.rsplit('.', 1)[1]
+                 for ln in old_localnames):
+            # The old import is a from-import.
+            import_alias = 'FROM'
+        elif all(ln.imp.alias == old_localnames[0].imp.alias
+                 for ln in old_localnames):
+            # The old import is an as-import.
+            import_alias = old_localnames[0].imp.alias
+        else:
+            # The old imports are not all consistent, so we bail.
+            import_alias = None
+
+    # Now resolve the alias.
+    if import_alias in ('NONE', None):
+        return None
+    elif import_alias == 'FROM':
+        return name_to_import.rsplit('.', 1)[-1]
+    else:
+        return import_alias
+
+
 # TODO(benkraft): Once slicker can do it relatively easily, move the
 # use-fixing suggestors and helpers to their own file.
 def _fix_uses_suggestor(old_fullname, new_fullname,
@@ -1008,27 +1059,8 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
         old_localname_strings = {ln.localname for ln in old_localnames}
 
         # Figure out what alias to use for the new import.
-        if import_alias in ('NONE', None):
-            import_alias_for_this_file = None
-        elif import_alias == 'FROM':
-            import_alias_for_this_file = name_to_import.rsplit('.', 1)[-1]
-        elif import_alias == 'AUTO':
-            if all(ln.imp.alias == ln.imp.name for ln in old_localnames):
-                # The old import is a regular, full import.
-                import_alias_for_this_file = None
-            elif all(ln.imp.alias == ln.imp.name.rsplit('.', 1)[1]
-                     for ln in old_localnames):
-                # The old import is a from-import.
-                import_alias_for_this_file = name_to_import.rsplit('.', 1)[-1]
-            elif all(ln.imp.alias == old_localnames[0].imp.alias
-                     for ln in old_localnames):
-                # The old import is an as-import.
-                import_alias_for_this_file = old_localnames[0].imp.alias
-            else:
-                # The old imports are not all consistent, so we bail.
-                import_alias_for_this_file = None
-        else:
-            import_alias_for_this_file = import_alias
+        import_alias_for_this_file = _resolve_import_alias(
+            import_alias, name_to_import, old_localnames)
 
         new_localname, need_new_import = _choose_best_localname(
             file_info, new_fullname, name_to_import,
@@ -1613,7 +1645,7 @@ def main():
                               'This is the module-alias, even if you are '
                               'moving a symbol.  Should be a python name '
                               'or one of the special values: AUTO FROM NONE. '
-                              'AUTO says to use the same alias as the import '
+                              'AUTO says to use the same format as the import '
                               'it is replacing (on a case-by-case basis). '
                               'FROM says to always use a from-import. '
                               'NONE says to always use the full import. '
