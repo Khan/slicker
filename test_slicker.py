@@ -1194,6 +1194,13 @@ class AliasTest(TestBase):
             old_extra_text='import other.ok\n',
             new_extra_text='import other.ok\n')
 
+    def test_auto_with_implicit_imports(self):
+        self.assert_(
+            'foo.bar', 'baz.bang', 'AUTO',
+            'from foo import bar', 'from baz import bang',
+            old_extra_text='import foo.qux\n\nprint foo.qux.CONST\n',
+            new_extra_text='import foo.qux\n\nprint foo.qux.CONST\n')
+
     def test_auto_with_multiple_imports(self):
         self.assert_(
             'foo.bar', 'baz.bang', 'AUTO',
@@ -1204,9 +1211,9 @@ class AliasTest(TestBase):
     def test_auto_with_conflicting_imports(self):
         self.assert_(
             'foo.bar', 'baz.bang', 'AUTO',
-            'from foo import bar', 'import baz.bang',
+            'from foo import bar', 'from baz import bang',
             old_extra_text='def foo():\n  import foo.bar',
-            new_extra_text='def foo():\n  import baz.bang')
+            new_extra_text='def foo():\n  from baz import bang')
 
     def test_auto_for_toplevel_import(self):
         self.assert_(
