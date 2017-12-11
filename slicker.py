@@ -996,27 +996,28 @@ def _resolve_import_alias(import_alias, name_to_import, old_localnames):
     `from bar import foo` or whatever`) had.  old_localnames is the
     structure that lets us figure that out.
     """
+    # When resolving the alias, we need to know what import we might be
+    # replacing.  We only consider the "best" such import.  Luckily
+    # old_localnames is in quality order.
+    old_import = next((ln.imp for ln in old_localnames if ln.imp is not None),
+                      None)
+
     # If import_alias is AUTO, use old_localnames to figure out what
     # kind of alias we actually want to use.
     if import_alias == 'AUTO':
-        if not old_localnames or any(ln.imp is None for ln in old_localnames):
+        if not old_import:
             # No existing import to go by -- perhaps the symbol used to exist
             # locally in this file -- so we just default to full-import.
             import_alias = 'NONE'
-        elif all(ln.imp.alias == ln.imp.name for ln in old_localnames):
+        elif old_import.alias == old_import.name:
             # The old import is a regular, full import.
             import_alias = 'NONE'
-        elif all(ln.imp.alias == ln.imp.name.rsplit('.', 1)[1]
-                 for ln in old_localnames):
+        elif old_import.alias == old_import.name.rsplit('.', 1)[1]:
             # The old import is a from-import.
             import_alias = 'FROM'
-        elif all(ln.imp.alias == old_localnames[0].imp.alias
-                 for ln in old_localnames):
-            # The old import is an as-import.
-            import_alias = old_localnames[0].imp.alias
         else:
-            # The old imports are not all consistent, so we bail.
-            import_alias = None
+            # The old import is an as-import.
+            import_alias = old_import.alias
 
     # Now resolve the alias.
     if import_alias in ('NONE', None):
