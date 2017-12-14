@@ -1287,6 +1287,14 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
                 names_to_fix.setdefault(localname.fullname, set()).add(
                     localname)
 
+        # If name-to-fix A is a prefix of name-to-fix B, then we can remove
+        # B: it will get fixed when A does!  This happens for code like:
+        #   fn(module_to_move.myclass, module_to_move.myclass.classvar)
+        for name in names_to_fix.keys():    # make a copy since we mutate
+            if any(name != other_name and _dotted_starts_with(name, other_name)
+                   for other_name in names_to_fix):
+                del names_to_fix[name]
+
         # Now, we fix up each name in turn.  This is the part that follows
         # _fix_uses_suggestor fairly closely.
         imports_to_add = set()

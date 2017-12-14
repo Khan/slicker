@@ -1549,6 +1549,14 @@ class FixMovedRegionSuggestorTest(TestBase):
                            '    return f(const)\n'))
         self.assertFalse(self.error_output)
 
+    def test_combine_two_files(self):
+        self.write_file('foo.py', 'class Foo(object): var = 1\n')
+        self.write_file('bar.py',
+                        'import foo\n\nc = MyClass(foo.Foo, foo.Foo.myvar)')
+        slicker.make_fixes(['foo.Foo', 'bar.c'], 'bazbaz',
+                           project_root=self.tmpdir)
+        self.assertFalse(self.error_output)
+
     def test_move_references_everything_in_sight(self):
         self.write_file('foo.py',
                         ('from __future__ import absolute_import\n\n'
