@@ -143,14 +143,16 @@ def _dotted_starts_with(string, prefix):
     return prefix == string or string.startswith('%s.' % prefix)
 
 
-def _dotted_prefixes(string):
+def _dotted_prefixes(string, proper_only=False):
     """All prefixes of string, in the dotted sense.
 
     That is, all strings p such that _dotted_starts_with(string, p), in order
     from shortest to longest.
+
+    If proper_prefixes is True, do not include string itself.
     """
     string_parts = string.split('.')
-    for i in xrange(len(string_parts)):
+    for i in xrange(len(string_parts) - (1 if proper_only else 0)):
         yield '.'.join(string_parts[:i + 1])
 
 
@@ -1286,6 +1288,15 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
             else:
                 names_to_fix.setdefault(localname.fullname, set()).add(
                     localname)
+
+        # If name-to-fix A is a prefix of name-to-fix B, then we can remove
+        # B: it will get fixed when A does!  This happens for code like:
+        #   fn(module_to_move.myclass, module_to_move.myclass.classvar)
+        names_to_fix = {
+            name: value for (name, value) in names_to_fix.iteritems()
+            if not any(prefix in names_to_fix
+                       for prefix in _dotted_prefixes(name, proper_only=True))
+        }
 
         # Now, we fix up each name in turn.  This is the part that follows
         # _fix_uses_suggestor fairly closely.
