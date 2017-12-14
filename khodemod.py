@@ -95,6 +95,10 @@ class Patch(object):
         self.end = end
         self.permissions = file_permissions
 
+    def __repr__(self):
+        return ('<Patch: %s -> %s (%s:%s-%s)>'
+                % (self.old, self.new, self.filename, self.start, self.end))
+
     def apply_to(self, body):
         if body[self.start:self.end] != (self.old or ''):
             raise FatalError(self.filename, self.start,
