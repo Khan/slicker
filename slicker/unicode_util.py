@@ -19,7 +19,7 @@ from __future__ import absolute_import
 
 import re
 
-import khodemod
+from . import khodemod
 
 
 # From PEP 263: https://www.python.org/dev/peps/pep-0263/

@@ -6,9 +6,9 @@ import shutil
 import tempfile
 import unittest
 
-import khodemod
-import slicker
-import util
+from slicker import khodemod
+from slicker import slicker
+from slicker import util
 
 
 class TestBase(unittest.TestCase):

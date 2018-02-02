@@ -40,8 +40,6 @@ import os
 
 import tqdm
 
-import unicode_util
-
 
 DEFAULT_EXCLUDE_PATHS = ('genfiles', 'third_party')
 DEFAULT_EXTENSIONS = ('py',)
@@ -185,6 +183,7 @@ def read_file(root, filename):
     # TODO(benkraft): Cache contents.
     try:
         with open(os.path.join(root, filename)) as f:
+            from . import unicode_util
             return unicode_util.decode(filename, f.read())
     except IOError as e:
         if e.errno == 2:    # No such file
@@ -321,6 +320,7 @@ class Frontend(object):
                 # We changed what files exist: clear the cache.
                 _RESOLVE_PATHS_CACHE.clear()
             with open(abspath, 'w') as f:
+                from . import unicode_util
                 f.write(unicode_util.encode(filename, text))
                 self._modified_files.add((root, filename))
             if file_permissions:

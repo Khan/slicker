@@ -6,8 +6,8 @@ import tokenize
 
 import asttokens
 
-import khodemod
-import unicode_util
+from . import khodemod
+from . import unicode_util
 
 
 def filename_for_module_name(module_name):

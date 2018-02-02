@@ -25,8 +25,8 @@ from __future__ import absolute_import
 
 import os
 
-import khodemod
-import util
+from . import khodemod
+from . import util
 
 
 def _expand_and_normalize_one(project_root, old_fullname, new_fullname,
