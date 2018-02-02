@@ -169,5 +169,4 @@ def move_symbol_suggestor(project_root, old_fullname, new_fullname):
         for patch in _add_init_py(new_filename):
             yield patch
 
-
     return suggestor

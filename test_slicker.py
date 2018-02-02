@@ -1249,7 +1249,6 @@ class AliasTest(TestBase):
             'import foo.bar', 'import baz.bang')
 
 
-
 class FixMovedRegionSuggestorTest(TestBase):
     def test_rename_references_self(self):
         self.write_file('foo.py',

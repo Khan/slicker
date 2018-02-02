@@ -81,7 +81,8 @@ import string
 import sys
 import tokenize
 
-import fix_python_imports
+from fix_includes import fix_python_imports
+
 import inputs
 import khodemod
 import moves
