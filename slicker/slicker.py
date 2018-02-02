@@ -83,10 +83,10 @@ import tokenize
 
 from fix_includes import fix_python_imports
 
-import inputs
-import khodemod
-import moves
-import util
+from . import inputs
+from . import khodemod
+from . import moves
+from . import util
 
 
 _FILENAME_EXTENSIONS = ('.py', '.js', '.jsx', '.png', '.jpg', '.svg', '.html',
@@ -1716,4 +1716,6 @@ def main():
 
 
 if __name__ == '__main__':
+    # Note that pip-installed slicker calls main() directly, rather than
+    # running this file as a script; this is just included for completeness.
     main()

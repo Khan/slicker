@@ -8,12 +8,7 @@ doing just that!
 
 ## Installation
 
-- `git clone git@github.com:Khan/slicker.git`
-- `git submodule update --init`
-- `pip install -r requirements.txt`
-- optionally, add `slicker.py` to your path
-
-TODO(benkraft): Make slicker pip installable.
+`pip install slicker`
 
 ## Usage
 

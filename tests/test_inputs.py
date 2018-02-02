@@ -2,7 +2,7 @@ from __future__ import absolute_import
 
 import unittest
 
-import inputs
+from slicker import inputs
 import test_slicker
 
 

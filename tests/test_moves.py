@@ -3,7 +3,7 @@ from __future__ import absolute_import
 import os
 import stat
 
-import slicker
+from slicker import slicker
 import test_slicker
 
 

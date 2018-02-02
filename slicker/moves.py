@@ -5,8 +5,8 @@ import ast
 import os
 import stat
 
-import khodemod
-import util
+from . import khodemod
+from . import util
 
 
 def _add_init_py(filename):
