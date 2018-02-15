@@ -10,6 +10,8 @@ test:
 lint:
 	flake8
 
+check: lint test
+
 build: dev_deps
 	python setup.py sdist        # builds source distribution
 	python setup.py bdist_wheel  # builds wheel
