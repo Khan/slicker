@@ -2,54 +2,12 @@ from __future__ import absolute_import
 
 import ast
 import os
-import shutil
-import tempfile
 import unittest
 
-from slicker import khodemod
 from slicker import slicker
 from slicker import util
 
-
-class TestBase(unittest.TestCase):
-    maxDiff = None
-
-    def setUp(self):
-        self.tmpdir = os.path.realpath(
-            tempfile.mkdtemp(prefix=(self.__class__.__name__ + '.')))
-        self.error_output = []
-        # Poor-man's mock.
-        _old_emit = khodemod.emit
-
-        def restore_emit():
-            khodemod.emit = _old_emit
-        self.addCleanup(restore_emit)
-        khodemod.emit = lambda txt: self.error_output.append(txt)
-
-    def tearDown(self):
-        shutil.rmtree(self.tmpdir)
-
-    def join(self, *args):
-        return os.path.join(self.tmpdir, *args)
-
-    def copy_file(self, filename):
-        """Copy a file from testdata to tmpdir."""
-        shutil.copyfile(os.path.join('testdata', filename),
-                        os.path.join(self.tmpdir, filename))
-
-    def write_file(self, filename, contents):
-        if not os.path.exists(self.join(os.path.dirname(filename))):
-            os.makedirs(os.path.dirname(self.join(filename)))
-        with open(self.join(filename), 'w') as f:
-            f.write(contents)
-
-    def assertFileIs(self, filename, expected):
-        with open(self.join(filename)) as f:
-            actual = f.read()
-        self.assertMultiLineEqual(expected, actual)
-
-    def assertFileIsNot(self, filename):
-        self.assertFalse(os.path.exists(self.join(filename)))
+import base
 
 
 class ImportProvidesModuleTest(unittest.TestCase):
@@ -721,7 +679,7 @@ class NamesStartingWithTest(unittest.TestCase):
             {'a.b', 'a.c', 'a.d', 'a.e', 'a.f', 'a.g'})
 
 
-class ReplaceInStringTest(TestBase):
+class ReplaceInStringTest(base.TestBase):
     def assert_(self, old_module, new_module, old_string, new_string,
                 alias=None):
         """Assert that a file that imports old_module rewrites its strings too.
@@ -838,7 +796,7 @@ class ReplaceInStringTest(TestBase):
                      "I need to look at foo.bar.  Yes, foo.bar.")
 
 
-class RootTest(TestBase):
+class RootTest(base.TestBase):
     def test_root(self):
         self.copy_file('simple_in.py')
         with open(self.join('foo.py'), 'w') as f:
@@ -855,7 +813,7 @@ class RootTest(TestBase):
         self.assertFalse(self.error_output)
 
 
-class FixUsesTest(TestBase):
+class FixUsesTest(base.TestBase):
     def run_test(self, filebase, old_fullname, new_fullname,
                  import_alias=None,
                  expected_warnings=(), expected_error=None):
@@ -1122,7 +1080,7 @@ class FixUsesTest(TestBase):
             'foo.foo', 'bar.foo.foo')
 
 
-class AliasTest(TestBase):
+class AliasTest(base.TestBase):
     def assert_(self, old_module, new_module, alias,
                 old_import_line, new_import_line,
                 old_extra_text='', new_extra_text=''):
@@ -1249,7 +1207,7 @@ class AliasTest(TestBase):
             'import foo.bar', 'import baz.bang')
 
 
-class FixMovedRegionSuggestorTest(TestBase):
+class FixMovedRegionSuggestorTest(base.TestBase):
     def test_rename_references_self(self):
         self.write_file('foo.py',
                         ('something = 1\n'

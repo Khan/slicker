@@ -4,10 +4,10 @@ import os
 
 from slicker import slicker
 
-import test_slicker
+import base
 
 
-class RemoveEmptyFilesSuggestorTest(test_slicker.TestBase):
+class RemoveEmptyFilesSuggestorTest(base.TestBase):
     def test_removes_remaining_whitespace(self):
         self.write_file('foo.py',
                         ('\n\n\n   \n\n  \n'
@@ -128,7 +128,7 @@ class RemoveEmptyFilesSuggestorTest(test_slicker.TestBase):
         self.assertFalse(self.error_output)
 
 
-class ImportSortTest(test_slicker.TestBase):
+class ImportSortTest(base.TestBase):
     def test_third_party_sorting(self):
         self.copy_file('third_party_sorting_in.py')
 

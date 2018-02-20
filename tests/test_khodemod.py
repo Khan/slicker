@@ -1,10 +1,11 @@
 from __future__ import absolute_import
 
 from slicker import khodemod
-import test_slicker
+
+import base
 
 
-class PathFilterTest(test_slicker.TestBase):
+class PathFilterTest(base.TestBase):
     def test_resolve_paths(self):
         self.write_file('foo.py', '')
         self.write_file('bar/baz.py', '')

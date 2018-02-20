@@ -3,10 +3,11 @@ from __future__ import absolute_import
 import unittest
 
 from slicker import inputs
-import test_slicker
+
+import base
 
 
-class OneInputTest(test_slicker.TestBase):
+class OneInputTest(base.TestBase):
     def setUp(self):
         super(OneInputTest, self).setUp()
         self.write_file('foo.py', 'def myfunc(): return 4\n')
@@ -148,7 +149,7 @@ class OneInputTest(test_slicker.TestBase):
         self.assert_fails('foo.myfunc', 'bar', error)
 
 
-class ManyInputsTest(test_slicker.TestBase):
+class ManyInputsTest(base.TestBase):
     def setUp(self):
         super(ManyInputsTest, self).setUp()
         self.write_file('foo.py', ('def myfunc(): return 4\n\n'

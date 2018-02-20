@@ -4,10 +4,11 @@ import os
 import stat
 
 from slicker import slicker
-import test_slicker
+
+import base
 
 
-class FileMoveSuggestorTest(test_slicker.TestBase):
+class FileMoveSuggestorTest(base.TestBase):
     def test_move_module_within_directory(self):
         self.write_file('foo.py', 'def myfunc(): return 4\n')
         self.write_file('bar.py', 'import foo\n\nfoo.myfunc()\n')
@@ -136,7 +137,7 @@ class FileMoveSuggestorTest(test_slicker.TestBase):
             0o755, stat.S_IMODE(os.stat(self.join('baz.py')).st_mode))
 
 
-class SymbolMoveSuggestorTest(test_slicker.TestBase):
+class SymbolMoveSuggestorTest(base.TestBase):
     def test_move_function(self):
         self.write_file('foo.py', 'def myfunc(): return 17\n')
         slicker.make_fixes(['foo.myfunc'], 'newfoo.myfunc',
