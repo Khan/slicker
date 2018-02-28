@@ -160,16 +160,24 @@ class Import(object):
     Properties:
         name: the fully-qualified symbol we imported.
         alias: the name under which we imported it.
+        relativity: 'absolute', 'explicit', or 'implicit', depending whether
+            the import is absolute ('from slicker import util'), explicitly
+            relative ('from . import util'), or implicitly relative (just
+            'import util').  At present the latter is unused as we don't handle
+            those imports.
+            TOOD(benkraft): Handle implicit relative imports.
         node: the AST node for the import.
 
     So for example, 'from foo import bar' would result in an Import with
-    name='foo.bar' and alias='bar'.  See test cases for more examples.
+    name='foo.bar' and alias='bar'.  See test cases for more examples.  Note
+    that for relative imports, 'name' will be the real, absolute name.
     """
-    def __init__(self, name, alias, node, file_info):
+    def __init__(self, name, alias, relativity, node, file_info):
         # TODO(benkraft): Perhaps this class should also own extracting
         # name/alias from node.
         self.name = name
         self.alias = alias
+        self.relativity = relativity
         self.node = node
         self._file_info = file_info
         self._span = None  # computed lazily
@@ -237,19 +245,41 @@ def _compute_all_imports(file_info, within_node=None, toplevel_only=False):
     nodes = within_node.body if toplevel_only else ast.walk(within_node)
     for node in nodes:
         if isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom):
-            if isinstance(node, ast.ImportFrom) and node.level != 0:
-                # TODO(benkraft): Handle these, now that we have access to the
-                # filename we are operating on.
-                continue
+            if isinstance(node, ast.ImportFrom):
+                if node.module == '__future__':
+                    continue
+                elif node.level != 0:
+                    # The notable "weird" case here is e.g.
+                    # "from ... import sys", where full_from will be '', is
+                    # technically legal, albeit discouraged.
+                    # cf. https://www.python.org/dev/peps/pep-0328/
+                    relative_to = '.'.join(
+                        file_info.filename.split('/')[:-node.level])
+                    relativity = 'explicit'
+                    if node.module and relative_to:
+                        # Covers "from .foo import bar"
+                        full_from = '%s.%s' % (relative_to, node.module)
+                    else:
+                        # Covers both "from . import bar" and the weird case
+                        # "from ...sys import path" mentioned above.
+                        full_from = relative_to or node.module
+                else:
+                    full_from = node.module
+                    relativity = 'absolute'
+            else:
+                full_from = ''
+                relativity = 'absolute'
+
             for alias in node.names:
-                if isinstance(node, ast.Import):
-                    imports.add(
-                        Import(alias.name, alias.asname or alias.name,
-                               node, file_info))
-                elif node.module != '__future__':
-                    imports.add(
-                        Import('%s.%s' % (node.module, alias.name),
-                               alias.asname or alias.name, node, file_info))
+                if full_from:
+                    name = '%s.%s' % (full_from, alias.name)
+                else:
+                    name = alias.name
+
+                imports.add(
+                    Import(name, alias.asname or alias.name,
+                           relativity, node, file_info))
+
     return imports
 
 
@@ -1354,12 +1384,30 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
                         file_info.filename, conflicting_imports.pop().start,
                         "Your alias will conflict with imports in this file.")
 
-                if imp:
+                # Decide what text we should add for the new import.
+                if imp and imp.relativity == 'explicit' and (
+                        old_module.split('.')[:-imp.node.level] !=
+                        new_module.split('.')[:-imp.node.level]):
+                    # If the import was relative, and its new and old locations
+                    # are in different packages, we'll have to make it
+                    # absolute.  For example, maybe we're moving
+                    # 'from . import baz' from foo/bar.py to newfoo/bar.py.
+                    # We'll now have to write 'from foo import baz' instead.
+                    #
+                    # We make sure to keep the alias in this case -- that is,
+                    # we convert 'from . import bar' to 'from foo import bar',
+                    # rather than falling back on a fully qualified import
+                    # ('import foo.bar').
+                    import_stmt = '%s\n' % _new_import_stmt(name_to_import,
+                                                            alias=imp.alias)
+                elif imp:
+                    # Otherwise, if we have an import, just copy it.
                     start, end = util.get_area_for_ast_node(
                         imp.node, old_file_info,
                         include_previous_comments=False)
                     import_stmt = old_file_info.body[start:end]
                 else:
+                    # Without an import to crib from, we make up a new one.
                     import_stmt = '%s\n' % _new_import_stmt(name_to_import,
                                                             alias=None)
                 imports_to_add.add(import_stmt)
