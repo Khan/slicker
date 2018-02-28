@@ -47,7 +47,11 @@ class ComputeAllImportsTest(unittest.TestCase):
         for imp in actual:
             self.assertIsInstance(imp, slicker.Import)
             self.assertIsInstance(imp.node, (ast.Import, ast.ImportFrom))
-            modified_actual.add((imp.name, imp.alias, imp.start, imp.end))
+            if imp.relativity == 'absolute':
+                modified_actual.add((imp.name, imp.alias, imp.start, imp.end))
+            else:
+                modified_actual.add((imp.name, imp.alias, imp.start, imp.end,
+                                     imp.relativity))
 
         self.assertEqual(modified_actual, expected)
 
@@ -56,6 +60,34 @@ class ComputeAllImportsTest(unittest.TestCase):
             slicker._compute_all_imports(
                 util.File('some_file.py', 'import foo\n')),
             {('foo', 'foo', 0, 10)})
+
+    def test_relative_import(self):
+        self._assert_imports(
+            slicker._compute_all_imports(
+                util.File('foo/bar/some_file.py', 'from . import baz\n')),
+            {('foo.bar.baz', 'baz', 0, 17, 'explicit')})
+        self._assert_imports(
+            slicker._compute_all_imports(
+                util.File('foo/some_file.py', 'from .bar import baz\n')),
+            {('foo.bar.baz', 'baz', 0, 20, 'explicit')})
+        self._assert_imports(
+            slicker._compute_all_imports(
+                util.File('foo/bar/junk/some_file.py',
+                          'from .. import baz\n')),
+            {('foo.bar.baz', 'baz', 0, 18, 'explicit')})
+        self._assert_imports(
+            slicker._compute_all_imports(
+                util.File('foo/bar/some_file.py', 'from ..bar import baz\n')),
+            {('foo.bar.baz', 'baz', 0, 21, 'explicit')})
+        self._assert_imports(
+            slicker._compute_all_imports(
+                util.File('junk/junk/some_file.py',
+                          'from ...foo.bar import baz\n')),
+            {('foo.bar.baz', 'baz', 0, 26, 'explicit')})
+        self._assert_imports(
+            slicker._compute_all_imports(
+                util.File('junk/junk/some_file.py', 'from ... import foo\n')),
+            {('foo', 'foo', 0, 19, 'explicit')})
 
     def test_other_junk(self):
         self.assertFalse(
