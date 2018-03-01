@@ -4,6 +4,7 @@ import ast
 import os
 import unittest
 
+import mock
 from slicker import slicker
 from slicker import util
 
@@ -1216,11 +1217,18 @@ class AliasTest(base.TestBase):
             new_extra_text='def foo():\n  from baz import bang')
 
     def test_auto_with_conflicting_imports(self):
-        self.assert_(
-            'foo.bar', 'baz.bang', 'AUTO',
-            'from foo import bar', 'from baz import bang',
-            old_extra_text='def foo():\n  import foo.bar',
-            new_extra_text='def foo():\n  from baz import bang')
+        # To make the output reproducible, we mock _localnames_from_fullnames
+        # to sort its output, so when we choose an arbitrary import to follow,
+        # at least we choose a consistent one.
+        orig_localnames_from_fullnames = slicker._localnames_from_fullnames
+        with mock.patch('slicker.slicker._localnames_from_fullnames',
+                        lambda *args, **kwargs: list(sorted(
+                            orig_localnames_from_fullnames(*args, **kwargs)))):
+            self.assert_(
+                'foo.bar', 'baz.bang', 'AUTO',
+                'from foo import bar', 'from baz import bang',
+                old_extra_text='def foo():\n  import foo.bar',
+                new_extra_text='def foo():\n  from baz import bang')
 
     def test_auto_for_toplevel_import(self):
         self.assert_(
