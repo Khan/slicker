@@ -61,6 +61,9 @@ class File(object):
             self._tokens = asttokens.ASTTokens(self.body, tree=self.tree)
         return self._tokens
 
+    def __repr__(self):
+        return "File(filename=%r)" % self.filename
+
 
 def is_newline(token):
     # I think this is equivalent to doing
