@@ -725,7 +725,9 @@ class ReplaceInStringTest(base.TestBase):
         self.write_file(old_module.replace('.', os.sep) + '.py', '# A file')
         self.write_file('in.py', '"""%s"""\n%s\n\n_ = %s.myfunc()\n'
                         % (old_string,
-                           slicker._new_import_stmt(old_module, alias),
+                           slicker.Import(
+                               old_module, alias or old_module,
+                               'absolute', None, None).import_stmt(),
                            alias or old_module))
 
         slicker.make_fixes([old_module], new_module,
@@ -1133,14 +1135,15 @@ class FixUsesTest(base.TestBase):
 class AliasTest(base.TestBase):
     def assert_(self, old_module, new_module, alias,
                 old_import_line, new_import_line,
-                old_extra_text='', new_extra_text=''):
+                old_extra_text='', new_extra_text='',
+                filename='in.py'):
         """Assert that we rewrite imports the way we ought, with aliases."""
         self.write_file(old_module.replace('.', os.sep) + '.py', '# A file')
 
         # The last word of the import-line is the local-name.
         old_localname = old_import_line.split(' ')[-1]
         new_localname = new_import_line.split(' ')[-1]
-        self.write_file('in.py',
+        self.write_file(filename,
                         '%s\n\nX = %s.X\n%s\n'
                         % (old_import_line, old_localname, old_extra_text))
 
@@ -1150,7 +1153,7 @@ class AliasTest(base.TestBase):
 
         expected = ('%s\n\nX = %s.X\n%s\n'
                     % (new_import_line, new_localname, new_extra_text))
-        with open(self.join('in.py')) as f:
+        with open(self.join(filename)) as f:
             actual = f.read()
         self.assertMultiLineEqual(expected, actual)
 
@@ -1168,6 +1171,52 @@ class AliasTest(base.TestBase):
         self.assert_(
             'foo.bar', 'baz.bang', 'AUTO',
             'import foo.bar as bar', 'from baz import bang')
+
+    def test_auto_relative_import(self):
+        self.assert_(
+            'foo.bar', 'foo.newbar', 'AUTO',
+            'from . import bar', 'from . import newbar',
+            filename='foo/in.py')
+        self.assert_(
+            'foo.bar', 'newfoo.bar', 'AUTO',
+            'from . import bar', 'from newfoo import bar',
+            filename='foo/in.py')
+        self.assert_(
+            'foo.bar', 'newfoo.newbar', 'AUTO',
+            'from . import bar', 'from newfoo import newbar',
+            filename='foo/in.py')
+
+    def test_auto_perserves_silly_relative_imports(self):
+        self.assert_(
+            'foo.bar', 'foo.newbar', 'AUTO',
+            'from .foo import bar', 'from .foo import newbar',
+            filename='garbage.py')
+        self.assert_(
+            'foo.bar', 'newfoo.bar', 'AUTO',
+            'from .foo import bar', 'from .newfoo import bar',
+            filename='garbage.py')
+
+    def test_auto_relative_import_deeper_directory(self):
+        # This has to be a separate test from the above, because
+        # it has a different directory structure.
+        self.assert_(
+            'foo.bar.baz', 'foo.bar.newbaz', 'AUTO',
+            'from . import baz', 'from . import newbaz',
+            filename='foo/bar/in.py')
+        self.assert_(
+            'foo.bar.baz', 'foo.newbar.baz', 'AUTO',
+            'from . import baz', 'from foo.newbar import baz',
+            filename='foo/bar/in.py')
+
+    def test_auto_relative_import_sibling_directory(self):
+        self.assert_(
+            'foo.bar.baz', 'foo.newbar.baz', 'AUTO',
+            'from ..bar import baz', 'from ..newbar import baz',
+            filename='foo/bang/in.py')
+        self.assert_(
+            'foo.bar.baz', 'newfoo.bar.baz', 'AUTO',
+            'from ..bar import baz', 'from newfoo.bar import baz',
+            filename='foo/bang/in.py')
 
     def test_auto_with_symbol_full_import(self):
         self.write_file('foo/bar.py', 'myfunc = lambda: None\n')
@@ -1262,6 +1311,86 @@ class AliasTest(base.TestBase):
         self.assert_(
             'foo.bar', 'baz.bang', None,
             'import foo.bar', 'import baz.bang')
+
+    def test_makes_relative(self):
+        self.assert_(
+            'foo.bar', 'foo.newbar', 'RELATIVE',
+            'from foo import bar', 'from . import newbar',
+            filename='foo/in.py')
+        self.assert_(
+            'foo.bar', 'foo.newbar', 'RELATIVE',
+            'import foo.bar', 'from . import newbar',
+            filename='foo/in.py')
+
+    def test_cant_make_relative(self):
+        self.assert_(
+            'foo.bar', 'newfoo.bar', 'RELATIVE',
+            'from foo import bar', 'from newfoo import bar',
+            filename='foo/in.py')
+        self.assert_(
+            'foo.bar', 'newfoo.bar', 'RELATIVE',
+            'import foo.bar', 'from newfoo import bar',
+            filename='foo/in.py')
+        self.assert_(
+            'foo.bar', 'newfoo.newbar', 'RELATIVE',
+            'from foo import bar', 'from newfoo import newbar',
+            filename='foo/in.py')
+        self.assert_(
+            'foo.bar', 'newfoo.newbar', 'RELATIVE',
+            'import foo.bar', 'from newfoo import newbar',
+            filename='foo/in.py')
+        self.assert_(
+            'foo.bar', 'foo.newbar', 'RELATIVE',
+            'from foo import bar', 'from foo import newbar',
+            filename='garbage.py')
+        self.assert_(
+            'foo.bar', 'foo.newbar', 'RELATIVE',
+            'import foo.bar', 'from foo import newbar',
+            filename='garbage.py')
+        self.assert_(
+            'foo.bar', 'newfoo.bar', 'RELATIVE',
+            'from foo import bar', 'from newfoo import bar',
+            filename='garbage.py')
+        self.assert_(
+            'foo.bar', 'newfoo.bar', 'RELATIVE',
+            'import foo.bar', 'from newfoo import bar',
+            filename='garbage.py')
+
+    def test_relative_deeper_directory(self):
+        self.assert_(
+            'foo.bar.baz', 'foo.bar.newbaz', 'RELATIVE',
+            'from foo.bar import baz', 'from . import newbaz',
+            filename='foo/bar/in.py')
+        self.assert_(
+            'foo.bar.baz', 'foo.bar.newbaz', 'RELATIVE',
+            'import foo.bar.baz', 'from . import newbaz',
+            filename='foo/bar/in.py')
+        self.assert_(
+            'foo.bar.baz', 'foo.newbar.baz', 'RELATIVE',
+            'from foo.bar import baz', 'from foo.newbar import baz',
+            filename='foo/bar/in.py')
+        self.assert_(
+            'foo.bar.baz', 'foo.newbar.baz', 'RELATIVE',
+            'import foo.bar.baz', 'from foo.newbar import baz',
+            filename='foo/bar/in.py')
+
+    def test_relative_sibling_directories(self):
+        self.assert_(
+            'foo.bar.baz', 'foo.newbar.baz', 'RELATIVE',
+            'from foo.bar import baz', 'from foo.newbar import baz',
+            filename='foo/bang/in.py')
+        self.assert_(
+            'foo.bar.baz', 'foo.newbar.baz', 'RELATIVE',
+            'import foo.bar.baz', 'from foo.newbar import baz',
+            filename='foo/bang/in.py')
+        self.assert_(
+            'foo.bar.baz', 'newfoo.bar.baz', 'RELATIVE',
+            'from foo.bar import baz', 'from newfoo.bar import baz',
+            filename='foo/bang/in.py')
+        self.assert_(
+            'foo.bar.baz', 'newfoo.bar.baz', 'RELATIVE',
+            'import foo.bar.baz', 'from newfoo.bar import baz',
+            filename='foo/bang/in.py')
 
 
 class FixMovedRegionSuggestorTest(base.TestBase):
