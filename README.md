@@ -14,46 +14,46 @@ doing just that!
 
 To move a function `myfunc` defined in `foo/bar.py` to `foo/baz.py`:
 ```
-slicker.py foo.bar.myfunc foo.baz.myfunc
+slicker foo.bar.myfunc foo.baz.myfunc
 ```
 
 The same syntax works if `myfunc` is instead a constant or class (although I
 sure hope you didn't name a class `myfunc`!).  It also works if you want to
 change the name of `myfunc`:
 ```
-slicker.py foo.bar.myfunc foo.bar.new_name_for_myfunc
+slicker foo.bar.myfunc foo.bar.new_name_for_myfunc
 ```
 (And you can also make both changes at once, in the natural way.)
 
 To move an entire module `foo/bar.py` to `foo/baz.py` you can do similarly:
 ```
-slicker.py foo.bar foo.baz
+slicker foo.bar foo.baz
 ```
 or use filenames like:
 ```
-slicker.py foo/bar.py foo/baz.py
+slicker foo/bar.py foo/baz.py
 ```
 
 You can also move a symbol into an existing module, or a module into an
 existing directory, just like `mv`.  So this is equivalent to the first
 example:
 ```
-slicker.py foo.bar.myfunc foo.baz
+slicker foo.bar.myfunc foo.baz
 ```
 And to move `foo/bar.py` to a new file `newfoo/bar.py` in an existing directory
 `newfoo/`, you could do
 ```
-slicker.py foo.bar newfoo  # (or slicker.py foo/bar.py newfoo/)
+slicker foo.bar newfoo  # (or slicker foo/bar.py newfoo/)
 ```
 Using this syntax, you can also specify multiple things to move, so you could
 move both `foo/bar.py` and `foo/baz.py` to `newfoo/` with
 ```
-slicker.py foo/bar.py foo/baz.py newfoo/
+slicker foo/bar.py foo/baz.py newfoo/
 ```
 
 You can tell slicker to use an alias when adding imports using `-a`/`--alias`:
 ```
-slicker.py foo.bar.myfunc foo.baz.myfunc --alias baz
+slicker foo.bar.myfunc foo.baz.myfunc --alias baz
 ```
 in which case slicker will add `from foo import baz` everywhere instead of
 `import foo.baz`.  (You could also have used `--alias foobaz` in which case
@@ -63,7 +63,7 @@ If you prefer to move the actual definition yourself, and just have slicker
 update the references, you can pass `--no-automove`.  It's probably best to run
 `slicker` after doing said move.
 
-For a full list of options, run `slicker.py --help`.
+For a full list of options, run `slicker --help`.
 
 
 ## Frequently and Infrequently Asked Questions

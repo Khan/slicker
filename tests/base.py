@@ -39,6 +39,10 @@ class TestBase(unittest.TestCase):
             os.makedirs(os.path.dirname(self.join(filename)))
         with open(self.join(filename), 'w') as f:
             f.write(contents)
+        # We may have a cached path-resolution; if we made a new file, it's now
+        # wrong.  (We could instead call khodemod.write_file which does this
+        # more precisely, but this is more convenient.)
+        khodemod._RESOLVE_PATHS_CACHE.clear()
 
     def assertFileIs(self, filename, expected):
         with open(self.join(filename)) as f:
