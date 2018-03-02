@@ -166,7 +166,9 @@ class Import(object):
             'import util').  At present the latter is unused as we don't handle
             those imports.
             TOOD(benkraft): Handle implicit relative imports.
-        node: the AST node for the import.
+        node: the AST node for the import.  None for imports we will create.
+        file_info: the util.FileInfo for the file in which the import resides
+            (or will reside).
 
     So for example, 'from foo import bar' would result in an Import with
     name='foo.bar' and alias='bar'.  See test cases for more examples.  Note
@@ -196,6 +198,44 @@ class Import(object):
     @property
     def end(self):
         return self.span[1]
+
+    def import_stmt(self):
+        """Construct an import statement for this import.
+
+        Most useful when node is None; otherwise you just want
+        file_info.body[self.start:self.end].
+        """
+        # TODO(csilvers): properly handle the case that
+        # name is "module.symbol" and alias is not None.
+        if self.relativity == 'explicit':
+            module_name_parts = util.module_name_for_filename(
+                self._file_info.filename).split('.')
+            import_name_parts = self.name.split('.')
+            shared_parts = len([
+                1 for module_name_part, import_name_part in zip(
+                    module_name_parts, import_name_parts)
+                if module_name_part == import_name_part])
+
+            # Level is in the same sense the ast means it: the number of dots
+            # at the front of the 'from' part.
+            level = len(module_name_parts) - shared_parts
+            # The base is some dots, plus all the non-shared parts except the
+            # last, which becomes the suffix.
+            base = '.' * level + '.'.join(import_name_parts[shared_parts:-1])
+            suffix = import_name_parts[-1]
+
+            if self.alias == suffix:
+                alias_part = suffix
+            else:
+                alias_part = '%s as %s' % (suffix, self.alias)
+            return 'from %s import %s' % (base, alias_part)
+        if self.alias and self.alias != self.name:
+            if '.' in self.name:
+                base, suffix = self.name.rsplit('.', 1)
+                if self.alias == suffix:
+                    return 'from %s import %s' % (base, suffix)
+            return 'import %s as %s' % (self.name, self.alias)
+        return 'import %s' % self.name
 
     def __repr__(self):
         return "Import(name=%r, alias=%r)" % (self.name, self.alias)
@@ -896,26 +936,6 @@ def _replace_in_file(file_info, old_fullname, old_localnames,
     return patches, used_localnames
 
 
-def _new_import_stmt(name, alias=None):
-    """Given a name and alias, decide the best import text.
-
-    Returns an import statement, like 'from foo import bar'.
-    """
-    # TODO(csilvers): properly handle the case that
-    # name is "module.symbol" and alias is not None.
-    if '.' in name and alias:
-        base, suffix = name.rsplit('.', 1)
-        if alias == suffix:
-            return 'from %s import %s' % (base, suffix)
-        else:
-            return 'import %s as %s' % (name, alias)
-    else:
-        if alias and alias != name:
-            return 'import %s as %s' % (name, alias)
-        else:
-            return 'import %s' % name
-
-
 def _add_contextless_import_patch(file_info, import_texts):
     """Add imports to the file_info, in a reasonable place.
 
@@ -998,8 +1018,9 @@ def _remove_import_patch(imp, file_info):
                               file_info.body[start:end], '', start, end)
 
 
-def _resolve_import_alias(import_alias, name_to_import, old_localnames):
-    """Determine the import alias to use for the import of a renamed symbol.
+def _determine_import_to_add(import_alias, name_to_import, old_localnames,
+                             file_info):
+    """Determine the import to use for the import of a renamed symbol.
 
     If you've renamed foo.bar.myfunc() to baz.bang.myfunc(), and you're
     now editing somefile.py to change its call of foo.bar.myfunc() to
@@ -1007,17 +1028,21 @@ def _resolve_import_alias(import_alias, name_to_import, old_localnames):
     `import foo.bar` with `import baz.bang`.  Or maybe you're replacing
     somefile's `from foo import bar` with `from baz import bang`?  Or
     `import foo.bar as foo_bar` with `import baz.bang as baz_bang`?  This
-    is the function that determines what alias to use for the new
+    is the function that determines what syntax to use for the new
     (baz.bang) import.
 
     In the easy case, import_alias tells us the alias to use for the new
     import.  But usually import_alias will be a special value: FROM,
-    NONE, or AUTO.  In the FROM case, we return an alias that will turn
-    name_to_import into a from-import.  In the NONE case, we return an
-    alias that will leave name_to_import untouched.  In the AUTO case,
+    NONE, RELATIVE, or AUTO.  In the FROM case, we return an alias that
+    will turn name_to_import into a from-import.  In the NONE case, we
+    return an alias that will leave name_to_import untouched.  In the
+    RELATIVE case, we write the import as a relative import, if it's
+    reasonable to do so, and use FROM otherwise..  In the AUTO case,
     we'll keep the same form that the old import (`import foo.bar` or
     `from bar import foo` or whatever`) had.  old_localnames is the
     structure that lets us figure that out.
+
+    Returns an Import object that we should add.
     """
     # When resolving the alias, we need to know what import we might be
     # replacing.  We only consider the "best" such import.  Luckily
@@ -1032,6 +1057,9 @@ def _resolve_import_alias(import_alias, name_to_import, old_localnames):
             # No existing import to go by -- perhaps the symbol used to exist
             # locally in this file -- so we just default to full-import.
             import_alias = 'NONE'
+        elif old_import.relativity == 'explicit':
+            # The old import was relative -- keep it if we (reasonably) can.
+            import_alias = 'RELATIVE'
         elif old_import.alias == old_import.name:
             # The old import is a regular, full import.
             import_alias = 'NONE'
@@ -1043,12 +1071,34 @@ def _resolve_import_alias(import_alias, name_to_import, old_localnames):
             import_alias = old_import.alias
 
     # Now resolve the alias.
+    relativity = 'absolute'
+    if import_alias == 'RELATIVE':
+        module_name = util.module_name_for_filename(file_info.filename)
+        if old_import and hasattr(old_import.node, 'level'):
+            max_level = max(1, old_import.node.level)
+        else:
+            max_level = 1
+
+        if max_level > module_name.count('.'):
+            # The ... gets us all the way back up to the root.
+            # This is a questionable idea, so we only do it if
+            # we're closely following an existing import.
+            if old_import and old_import.relativity == 'explicit':
+                relativity = 'explicit'
+        else:
+            max_relative_to = module_name.rsplit('.', max_level)[0]
+            if name_to_import.startswith(max_relative_to):
+                relativity = 'explicit'
+            # Otherwise, this would require making the relative import go
+            # further up than it did before; we make the somewhat-arbitrary
+            # choice that FROM (rather than NONE) is the best fallback.)
+
     if import_alias in ('NONE', None):
-        return None
-    elif import_alias == 'FROM':
-        return name_to_import.rsplit('.', 1)[-1]
-    else:
-        return import_alias
+        import_alias = name_to_import
+    elif import_alias in ('RELATIVE', 'FROM'):
+        import_alias = name_to_import.rsplit('.', 1)[-1]
+
+    return Import(name_to_import, import_alias, relativity, None, file_info)
 
 
 # TODO(benkraft): Once slicker can do it relatively easily, move the
@@ -1077,8 +1127,10 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
             also be a special value:
                "FROM": always use from-syntax for every use we fix
                "NONE" (or None): always use name_to_import
+               "RELATIVE": use relative-import syntax when reasonable
                "AUTO": if the import we're fixing used `from` or `as`,
-                       we do too, otherwise we use name_to_import.
+                       we do too; if it was relative, we do that too;
+                       otherwise we use name_to_import.
     """
     def suggestor(filename, body):
         """filename is relative to the value of --root."""
@@ -1106,13 +1158,12 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
             _localnames_from_fullnames(file_info, {old_fullname}))
         old_localname_strings = {ln.localname for ln in old_localnames}
 
-        # Figure out what alias to use for the new import.
-        import_alias_for_this_file = _resolve_import_alias(
-            import_alias, name_to_import, old_localnames)
+        # Figure out what the new import should look like.
+        new_import = _determine_import_to_add(
+            import_alias, name_to_import, old_localnames, file_info)
 
         new_localname, need_new_import = _choose_best_localname(
-            file_info, new_fullname, name_to_import,
-            import_alias_for_this_file)
+            file_info, new_fullname, name_to_import, new_import.alias)
 
         # Now, patch references -- _replace_in_file does all the work.
         patches, used_localnames = _replace_in_file(
@@ -1124,23 +1175,18 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
         # Finally, add a new import, if necessary.
         if need_new_import and used_localnames:
             conflicting_imports = _check_import_conflicts(
-                file_info, old_fullname,
-                import_alias_for_this_file or name_to_import,
-                bool(import_alias_for_this_file))
+                file_info, old_fullname, new_import.alias,
+                new_import.alias != new_import.name)
             if conflicting_imports:
                 raise khodemod.FatalError(
                     file_info.filename, conflicting_imports.pop().start,
                     "Your alias will conflict with imports in this file.")
 
-            # Decide what the import will say.
-            import_stmt = _new_import_stmt(name_to_import,
-                                           import_alias_for_this_file)
-
             old_imports = {ln.imp for ln in old_localnames
                            if ln.imp is not None}
 
-            # Decide where to add it.  The issue here is that we may
-            # be replacing a "late import" (an import inside a
+            # Decide where to add the new import.  The issue here is that
+            # we may be replacing a "late import" (an import inside a
             # function) in which case we want the new import to be
             # inside the same function at the same place.  In fact, we
             # might be late-importing the same module in *several*
@@ -1157,7 +1203,7 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
                 # corresponding to an existing one.  (So we also don't
                 # need to worry about copying comments or indenting.)
                 yield _add_contextless_import_patch(
-                    file_info, ['%s\n' % import_stmt])
+                    file_info, ['%s\n' % new_import.import_stmt()])
             else:
                 # There were existing imports of the old name,
                 # so we try to match those.
@@ -1181,7 +1227,7 @@ def _fix_uses_suggestor(old_fullname, new_fullname,
                     # Now we can add the new import and have the same context
                     # as the import we are taking the place of!
                     text_to_add = ''.join(
-                        [pre_context, import_stmt, post_context])
+                        [pre_context, new_import.import_stmt(), post_context])
                     yield khodemod.Patch(filename, '', text_to_add,
                                          start, start)
 
@@ -1384,32 +1430,32 @@ def _fix_moved_region_suggestor(project_root, old_fullname, new_fullname):
                         file_info.filename, conflicting_imports.pop().start,
                         "Your alias will conflict with imports in this file.")
 
-                # Decide what text we should add for the new import.
-                if imp and imp.relativity == 'explicit' and (
-                        old_module.split('.')[:-imp.node.level] !=
-                        new_module.split('.')[:-imp.node.level]):
-                    # If the import was relative, and its new and old locations
-                    # are in different packages, we'll have to make it
-                    # absolute.  For example, maybe we're moving
-                    # 'from . import baz' from foo/bar.py to newfoo/bar.py.
-                    # We'll now have to write 'from foo import baz' instead.
-                    #
-                    # We make sure to keep the alias in this case -- that is,
-                    # we convert 'from . import bar' to 'from foo import bar',
-                    # rather than falling back on a fully qualified import
-                    # ('import foo.bar').
-                    import_stmt = '%s\n' % _new_import_stmt(name_to_import,
-                                                            alias=imp.alias)
-                elif imp:
-                    # Otherwise, if we have an import, just copy it.
+                if imp and (not imp.relativity == 'explicit' or
+                            old_module.split('.')[:-imp.node.level] ==
+                            new_module.split('.')[:-imp.node.level]):
+                    # Otherwise, if we have an import, and it's not relative,
+                    # or it is, but the new and old module are in the same
+                    # package, we can keep it -- just copy the text.
+                    # For example, maybe we're moving 'from . import baz'
+                    # from foo/bar.py to foo/foobar.py, we can keep it,
+                    # but if we moved it to newfoo/bar.py, we have to
+                    # write 'from foo import baz' instead.
                     start, end = util.get_area_for_ast_node(
                         imp.node, old_file_info,
                         include_previous_comments=False)
                     import_stmt = old_file_info.body[start:end]
                 else:
-                    # Without an import to crib from, we make up a new one.
-                    import_stmt = '%s\n' % _new_import_stmt(name_to_import,
-                                                            alias=None)
+                    # Otherwise, we must create an import out of whole cloth,
+                    # or at least rewrite it a bit -- decide what text to use.
+                    #
+                    # If rewriting, we make sure to keep the alias -- that is,
+                    # we convert 'from . import bar' to 'from foo import bar',
+                    # rather than falling back on a fully qualified import
+                    # ('import foo.bar').
+                    new_import = Import(
+                        name_to_import, imp.alias if imp else name_to_import,
+                        'absolute', None, file_info)
+                    import_stmt = '%s\n' % new_import.import_stmt()
                 imports_to_add.add(import_stmt)
 
         if imports_to_add:
@@ -1636,6 +1682,8 @@ def main():
                               'AUTO says to use the same format as the import '
                               'it is replacing (on a case-by-case basis). '
                               'FROM says to always use a from-import. '
+                              'RELATIVE says to use a relative import '
+                              'when reasonable, and FROM otherwise. '
                               'NONE says to always use the full import. '
                               'Default is %(default)s'))
     parser.add_argument('-f', '--use-from', action='store_true',
