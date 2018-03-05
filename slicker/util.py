@@ -1,3 +1,4 @@
+"""Utilities for interacting with the AST, files, and names."""
 from __future__ import absolute_import
 
 import ast
@@ -141,4 +142,77 @@ def toplevel_names(file_info):
             if (len(top_level_stmt.targets) == 1 and
                     isinstance(top_level_stmt.targets[0], ast.Name)):
                 retval[top_level_stmt.targets[0].id] = top_level_stmt
+    return retval
+
+
+def dotted_starts_with(string, prefix):
+    """Like string.startswith(prefix), but in the dotted sense.
+
+    That is, abc is a prefix of abc.de but not abcde.ghi.
+    """
+    return prefix == string or string.startswith('%s.' % prefix)
+
+
+def dotted_prefixes(string, proper_only=False):
+    """All prefixes of string, in the dotted sense.
+
+    That is, all strings p such that dotted_starts_with(string, p), in order
+    from shortest to longest.
+
+    If proper_prefixes is True, do not include string itself.
+    """
+    string_parts = string.split('.')
+    for i in xrange(len(string_parts) - (1 if proper_only else 0)):
+        yield '.'.join(string_parts[:i + 1])
+
+
+def name_for_node(node):
+    """Return the dotted name of an AST node, if there's a reasonable one.
+
+    A 'name' is just a dotted-symbol, e.g. `myvar` or `myvar.mystruct.myprop`.
+
+    This only does anything interesting for Name and Attribute, and for
+    Attribute only if it's like a.b.c, not (a + b).c.
+    """
+    if isinstance(node, ast.Name):
+        return node.id
+    elif isinstance(node, ast.Attribute):
+        value = name_for_node(node.value)
+        if value:
+            return '%s.%s' % (value, node.attr)
+
+
+def all_names(root):
+    """All names in the file.
+
+    A 'name' is just a dotted-symbol, e.g. `myvar` or `myvar.mystruct.myprop`.
+
+    Does not include imports or string references or anything else funky like
+    that, and only returns the "biggest" possible name -- if you reference
+    a.b.c we won't include a.b.
+
+    Returns pairs (name, node)
+    """
+    name = name_for_node(root)
+    if name:
+        return {(name, root)}
+    else:
+        return {(name, node)
+                for child in ast.iter_child_nodes(root)
+                for name, node in all_names(child)}
+
+
+def names_starting_with(prefix, ast_node):
+    """Returns all dotted names in the given file beginning with 'prefix'.
+
+    Does not include imports or string references or anything else funky like
+    that.  "Beginning with prefix" in the dotted sense (see
+    dotted_starts_with).
+
+    Returns a dict of name -> list of AST nodes.
+    """
+    retval = {}
+    for name, node in all_names(ast_node):
+        if dotted_starts_with(name, prefix):
+            retval.setdefault(name, []).append(node)
     return retval
