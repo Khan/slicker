@@ -86,6 +86,19 @@ class FixUsesTest(base.TestBase):
             'somepackage/relative_same_package',
             'somepackage.foo.some_function', 'somepackage.bar.new_name')
 
+    @unittest.skip("We should do a from import, see #22.")
+    def test_symbol(self):
+        self.create_module('foo')
+        self.run_test(
+            'symbol',
+            'foo.some_function', 'bar.new_name')
+
+    def test_symbol_alias_none(self):
+        self.create_module('foo')
+        self.run_test(
+            'symbol_alias_none',
+            'foo.some_function', 'bar.new_name', import_alias='NONE')
+
     def test_whole_file(self):
         self.create_module('foo')
         self.run_test(
