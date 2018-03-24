@@ -1,6 +1,8 @@
 slicker: a tool for moving python files
 ---------------------------------------
 
+[![Build Status](https://travis-ci.org/Khan/slicker.svg?branch=master)](https://travis-ci.org/Khan/slicker)
+
 If you've ever tried to move a function or class in python, you'll find it's
 kind of a pain: you have to not only move the definition (and its imports,
 etc.) but also update references across the codebase.  Slicker is a tool for
