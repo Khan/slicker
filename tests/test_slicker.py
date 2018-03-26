@@ -99,6 +99,20 @@ class FixUsesTest(base.TestBase):
             'symbol_alias_none',
             'foo.some_function', 'bar.new_name', import_alias='NONE')
 
+    @unittest.skip("We should do a from import, see #22.")
+    def test_symbol_import_moving_file(self):
+        self.create_module('foo')
+        self.run_test(
+            'symbol',
+            'foo', 'bar')
+
+    @unittest.skip("Known issue, see #20.")
+    def test_symbol_import_moving_file_alias_none(self):
+        self.create_module('foo')
+        self.run_test(
+            'symbol_alias_none',
+            'foo', 'bar', import_alias='NONE')
+
     def test_whole_file(self):
         self.create_module('foo')
         self.run_test(
