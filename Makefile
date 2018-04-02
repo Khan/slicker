@@ -10,13 +10,16 @@ test:
 lint:
 	flake8
 
-check: lint test
+check: lint test ;
+
+clean:
+	git clean -xffd
 
 build: dev_deps
 	python setup.py sdist        # builds source distribution
 	python setup.py bdist_wheel  # builds wheel
 
-release: build
+release: clean build
 	twine upload dist/*
 
 .PHONY: deps test lint build release
