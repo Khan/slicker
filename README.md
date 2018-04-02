@@ -113,3 +113,14 @@ figure out all the right references to fix up in each file.  And there's
 basically no hope of doing the right thing when fixing up string-references.
 We needed something that knew what python imports mean and could handle their
 special cases.
+
+## Changelog
+
+### 0.9.1
+
+- Handle relative imports correctly
+- Lots of internal refactoring
+
+### 0.9
+
+- Initial release to PyPI
