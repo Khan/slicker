@@ -1,5 +1,5 @@
-slicker: a tool for moving python files
----------------------------------------
+Slicker: A Tool for Moving Things in Python
+-------------------------------------------
 
 [![Build Status](https://travis-ci.org/Khan/slicker.svg?branch=master)](https://travis-ci.org/Khan/slicker)
 
@@ -96,17 +96,15 @@ name wasn't already taken.
 
 ### How does it work?
 
-Read the source!  Or bug the authors to write a blog post about it :-) .
+See the [blog post](http://engineering.khanacademy.org/posts/slicker.htm) for
+an overview.  If that's not enough, bug the authors or read the source!
 
 ### Why don't you just use [PyCharm](https://www.jetbrains.com/pycharm/) or [rope](https://github.com/python-rope/rope)?
 
 Good question -- we tried!  Both are great projects and do a lot of things
 slicker doesn't; if they work for you then definitely use them.  But for us,
-they aren't quite as detailed in what they do, so they didn't fix up everything
-quite right for us, and they're not particularly configurable (e.g. to conform
-to KA style) or hackable (due to how general they try to be).  We were more
-interested in a tool that would do one thing really well.  For more details,
-bug the authors to write that blog post!
+they were a little buggy and didn't fit our workflow.  For more details, see
+the [blog post](http://engineering.khanacademy.org/posts/slicker.htm).
 
 ### Why don't you just use `codemod` or `sed`/`perl`?
 
