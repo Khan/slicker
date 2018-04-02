@@ -116,6 +116,10 @@ special cases.
 
 ## Changelog
 
+### 0.9.2
+
+- Fix description on PyPI
+
 ### 0.9.1
 
 - Handle relative imports correctly

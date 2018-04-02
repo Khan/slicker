@@ -4,7 +4,7 @@ from setuptools import setup
 
 setup(
     name='slicker',
-    version='0.9.1',
+    version='0.9.2',
     description='A tool for moving python files.',
     author='Khan Academy',
     author_email='opensource+pypi@khanacademy.org',
