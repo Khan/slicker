@@ -116,7 +116,7 @@ special cases.
 
 ## Changelog
 
-### 0.9.2
+### 0.9.3
 
 - Fix description on PyPI, again
 
