@@ -2,10 +2,15 @@
 
 from setuptools import setup
 
+with open("README.md") as f:
+    long_description = f.read()
+
 setup(
     name='slicker',
-    version='0.9.2',
+    version='0.9.3',
     description='A tool for moving python files.',
+    long_description=long_description,
+    long_description_content_type='text/markdown',
     author='Khan Academy',
     author_email='opensource+pypi@khanacademy.org',
     url='https://github.com/Khan/slicker',

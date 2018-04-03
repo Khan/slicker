@@ -118,6 +118,10 @@ special cases.
 
 ### 0.9.2
 
+- Fix description on PyPI, again
+
+### 0.9.2
+
 - Fix description on PyPI
 
 ### 0.9.1
