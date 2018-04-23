@@ -75,7 +75,7 @@ class RemoveEmptyFilesSuggestorTest(base.TestBase):
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('# this comment is very important!!!!!111\n'
-                           'from __future__ import absolute_import\n\n'))
+                           'from __future__ import absolute_import\n'))
         self.assertFileIs('newfoo.py',
                           ('from __future__ import absolute_import\n\n'
                            'import bar\n\n\n'
@@ -97,7 +97,7 @@ class RemoveEmptyFilesSuggestorTest(base.TestBase):
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('"""This file frobnicates the doodad."""\n'
-                           'from __future__ import absolute_import\n\n'))
+                           'from __future__ import absolute_import\n'))
         self.assertFileIs('newfoo.py',
                           ('from __future__ import absolute_import\n\n'
                            'import bar\n\n\n'
@@ -119,7 +119,7 @@ class RemoveEmptyFilesSuggestorTest(base.TestBase):
                            project_root=self.tmpdir)
         self.assertFileIs('foo.py',
                           ('from __future__ import absolute_import\n\n'
-                           'baz = 1\n\n'))
+                           'baz = 1\n'))
         self.assertFileIs('newfoo.py',
                           ('from __future__ import absolute_import\n\n'
                            'import bar\n\n\n'
