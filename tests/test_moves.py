@@ -124,7 +124,7 @@ class FileMoveSuggestorTest(base.TestBase):
         self.assertFileIs('baz/faa.py', 'def myfaa(): return 4\n')
         self.assertFileIs('baz/__init__.py', '')
         self.assertFileIs('bar.py',
-                          ('from baz import faa\nfrom baz import foo\n\n'
+                          ('from baz import faa, foo\n\n'
                            'foo.myfunc()\nfaa.myfaa()\n'))
         self.assertFalse(self.error_output)
 
