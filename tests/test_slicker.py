@@ -357,7 +357,12 @@ class AliasTest(base.TestBase):
                            project_root=self.tmpdir, automove=False)
         self.assertFalse(self.error_output)
 
-        expected = ('%s\n\nX = %s.X\n%s\n'
+        if new_extra_text:
+            # ensure only one newline character at the end of the file
+            # as isort trim EOF newlines
+            new_extra_text = new_extra_text.rstrip("\n") + '\n'
+
+        expected = ('%s\n\nX = %s.X\n%s'
                     % (new_import_line, new_localname, new_extra_text))
         with open(self.join(filename)) as f:
             actual = f.read()
