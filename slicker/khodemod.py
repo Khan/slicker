@@ -438,8 +438,16 @@ class AcceptingFrontend(Frontend):
                  % (warning.message, filename, lineno, line))
 
     def handle_error(self, root, error):
-        body = read_file(root, error.filename) or ''
-        lineno, _ = pos_to_line_col(body, error.pos)
-        line = body.splitlines()[lineno - 1]
-        emit("ERROR:%s\n    on %s:%s --> %s"
-             % (error.message, error.filename, lineno, line))
+        body = read_file(root, error.filename)
+        if body:
+            try:
+                lineno, _ = pos_to_line_col(body, error.pos)
+                line = body.splitlines()[lineno - 1]
+                line_info = ":%s --> %s" % (lineno, line)
+            except Exception:
+                # Error error!  Make sure not to crash so we still log it.
+                line_info = " at invalid position %s" % error.pos
+        else:
+            line_info = " (empty)"
+        emit("ERROR:%s\n    on %s%s"
+             % (error.message, error.filename, line_info))
