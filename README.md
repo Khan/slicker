@@ -8,9 +8,11 @@ kind of a pain: you have to not only move the definition (and its imports,
 etc.) but also update references across the codebase.  Slicker is a tool for
 doing just that!
 
+**Note:** At this time Slicker is [Python 2 only](https://github.com/Khan/slicker/issues/21).
+
 ## Installation
 
-`pip install slicker`
+`pip2 install slicker`
 
 ## Usage
 
