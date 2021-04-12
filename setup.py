@@ -16,7 +16,7 @@ setup(
     url='https://github.com/Khan/slicker',
     keywords=['codemod', 'refactor', 'refactoring'],
     packages=['slicker'],
-    install_requires=['asttokens==1.1.8', 'tqdm==4.19.5', 'fix-includes==0.2'],
+    install_requires=['asttokens==1.1.8', 'tqdm==4.19.5', 'isort==4.3.4'],
     entry_points={
         # setuptools magic to make a `slicker` binary
         'console_scripts': ['slicker = slicker.slicker:main'],

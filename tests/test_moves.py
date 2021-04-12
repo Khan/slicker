@@ -124,7 +124,7 @@ class FileMoveSuggestorTest(base.TestBase):
         self.assertFileIs('baz/faa.py', 'def myfaa(): return 4\n')
         self.assertFileIs('baz/__init__.py', '')
         self.assertFileIs('bar.py',
-                          ('from baz import faa\nfrom baz import foo\n\n'
+                          ('from baz import faa, foo\n\n'
                            'foo.myfunc()\nfaa.myfaa()\n'))
         self.assertFalse(self.error_output)
 
@@ -186,7 +186,7 @@ class SymbolMoveSuggestorTest(base.TestBase):
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py',
                           ('"""A file with the new version of foo."""\n'
-                           'import quux\n\n'
+                           'import quux\n\n\n'
                            'def otherfunc():\n'
                            '    return 71\n\n\n'
                            'def myfunc(): return 17\n'))
@@ -216,7 +216,7 @@ class SymbolMoveSuggestorTest(base.TestBase):
                            project_root=self.tmpdir)
         self.assertFileIs('newfoo.py',
                           ('"""A file with the new version of foo."""\n'
-                           'import quux\n\n'
+                           'import quux\n\n\n'
                            'def otherfunc():\n'
                            '    return quux.value\n\n\n'
                            '# Does some stuff\n'
@@ -226,7 +226,7 @@ class SymbolMoveSuggestorTest(base.TestBase):
                            '    return 289\n'))
         self.assertFileIs('foo.py',
                           ('"""A file with the old version of foo."""\n'
-                           'import quux\n\n'
+                           'import quux\n\n\n'
                            'def _secretfunc():\n'
                            '    return quux.secretmonkeys\n\n\n'
                            '# Here is another function.\n'

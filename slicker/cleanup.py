@@ -10,9 +10,8 @@ from __future__ import absolute_import
 import ast
 import difflib
 import os
-import sys
 
-from fix_includes import fix_python_imports
+from isort import SortImports
 
 from . import util
 from . import khodemod
@@ -74,33 +73,14 @@ class _FakeOptions(object):
 
 def import_sort_suggestor(project_root):
     """Suggestor to fix up imports in a file."""
-    fix_imports_flags = _FakeOptions(project_root)
-
     def suggestor(filename, body):
         """`filename` relative to project_root."""
         # TODO(benkraft): merge this with the import-adding, so we just show
         # one diff to add in the right place, unless there is additional
         # sorting to do.
-        # Now call out to fix_python_imports to do the import-sorting
-        change_record = fix_python_imports.ChangeRecord('fake_file.py')
+        # Now call out to isort to do the import-sorting
+        fixed_body = SortImports(file_contents=body).output
 
-        # A modified version of fix_python_imports.GetFixedFile
-        # NOTE: fix_python_imports needs the rootdir to be on the
-        # path so it can figure out third-party deps correctly.
-        # (That's in addition to having it be in FakeOptions, sigh.)
-        try:
-            sys.path.insert(0, os.path.abspath(project_root))
-            file_line_infos = fix_python_imports.ParseOneFile(
-                body, change_record)
-            fixed_lines = fix_python_imports.FixFileLines(
-                change_record, file_line_infos, fix_imports_flags)
-        finally:
-            del sys.path[0]
-
-        if fixed_lines is None:
-            return
-        fixed_body = ''.join(['%s\n' % line for line in fixed_lines
-                              if line is not None])
         if fixed_body == body:
             return
 
