@@ -337,6 +337,16 @@ class FixUsesTest(base.TestBase):
             'repeated_name',
             'foo.foo', 'bar.foo.foo')
 
+    def test_ignore_uses_in_symlink(self):
+        self.create_module('foo')
+        os.symlink('simple_in.py', self.join('sym.py'))
+        self.run_test(
+            'simple',
+            'foo.some_function', 'bar.new_name')
+        # We shouldn't have rewritten the symlink, so it should still be
+        # a symlink.
+        self.assertTrue(os.path.islink(self.join('sym.py')))
+
 
 class AliasTest(base.TestBase):
     def assert_(self, old_module, new_module, alias,
